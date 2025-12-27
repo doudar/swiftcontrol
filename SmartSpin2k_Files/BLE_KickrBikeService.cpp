@@ -26,7 +26,13 @@ BLE_KickrBikeService::BLE_KickrBikeService()
       syncTxCharacteristic(nullptr),
       currentGear(KICKR_BIKE_DEFAULT_GEAR),
       lastShifterPosition(-1),
-      baseFTMSIncline(0.0) {}
+      baseGradient(0.0),
+      effectiveGradient(0.0),
+      targetPower(0),
+      isHandshakeComplete(false),
+      isEnabled(false),
+      lastKeepAliveTime(0),
+      lastGradientUpdateTime(0) {}
 
 void BLE_KickrBikeService::setupService(NimBLEServer *pServer, MyCharacteristicCallbacks *chrCallbacks) {
   // Create the Zwift Ride service (KICKR BIKE protocol)
@@ -48,8 +54,9 @@ void BLE_KickrBikeService::setupService(NimBLEServer *pServer, MyCharacteristicC
       ZWIFT_SYNC_TX_UUID, 
       NIMBLE_PROPERTY::NOTIFY);
   
-  // Set callbacks for write operations
-  syncRxCharacteristic->setCallbacks(chrCallbacks);
+  // Set custom callback for Sync RX to handle RideOn handshake
+  static KickrBikeCharacteristicCallbacks kickrBikeCallbacks;
+  syncRxCharacteristic->setCallbacks(&kickrBikeCallbacks);
   
   // Start the service
   pKickrBikeService->start();
@@ -61,9 +68,15 @@ void BLE_KickrBikeService::setupService(NimBLEServer *pServer, MyCharacteristicC
 }
 
 void BLE_KickrBikeService::update() {
-  // This method is called periodically to update the service state
-  // Currently, the main work is done in updateGearFromShifterPosition()
-  // which should be called from the main loop
+  // Send periodic keep-alive messages if handshake is complete
+  if (isHandshakeComplete) {
+    unsigned long currentTime = millis();
+    // Send keep-alive every 5 seconds
+    if (currentTime - lastKeepAliveTime >= 5000) {
+      sendKeepAlive();
+      lastKeepAliveTime = currentTime;
+    }
+  }
 }
 
 void BLE_KickrBikeService::shiftUp() {
@@ -96,8 +109,13 @@ double BLE_KickrBikeService::getCurrentGearRatio() const {
 }
 
 void BLE_KickrBikeService::applyGearChange() {
-  // Update the FTMS incline based on current gear
-  updateFTMSIncline();
+  // Recalculate effective gradient with new gear
+  effectiveGradient = calculateEffectiveGrade(baseGradient, getCurrentGearRatio());
+  
+  // Apply to trainer if this service is enabled
+  if (isEnabled) {
+    applyGradientToTrainer();
+  }
   
   // Optionally notify clients about gear change via async TX characteristic
   // This could be used to send gear status to connected apps
@@ -110,26 +128,61 @@ void BLE_KickrBikeService::applyGearChange() {
   asyncTxCharacteristic->notify();
 }
 
-void BLE_KickrBikeService::updateFTMSIncline() {
-  // Use the stored base incline (which should be updated when FTMS receives new values)
-  // If we haven't received a base incline yet, get current target as fallback
-  double baseIncline = baseFTMSIncline;
+void BLE_KickrBikeService::setBaseGradient(double gradientPercent) {
+  baseGradient = gradientPercent;
+  effectiveGradient = calculateEffectiveGrade(baseGradient, getCurrentGearRatio());
   
-  // Calculate the effective incline based on current gear
-  double effectiveGrade = calculateEffectiveGrade(baseIncline, getCurrentGearRatio());
+  // Apply to trainer if enabled
+  if (isEnabled) {
+    applyGradientToTrainer();
+  }
   
-  // Clamp to FTMS limits (-20% to +20%)
-  if (effectiveGrade < -20.0) effectiveGrade = -20.0;
-  if (effectiveGrade > 20.0) effectiveGrade = 20.0;
+  SS2K_LOG(BLE_SERVER_LOG_TAG, "KICKR BIKE: Base gradient set to %.2f%%", baseGradient);
+}
+
+double BLE_KickrBikeService::getEffectiveGradient() const {
+  return effectiveGradient;
+}
+
+void BLE_KickrBikeService::applyGradientToTrainer() {
+  // Only update if enough time has passed (100ms debounce)
+  unsigned long currentTime = millis();
+  if (currentTime - lastGradientUpdateTime < 100) {
+    return;
+  }
+  lastGradientUpdateTime = currentTime;
   
-  // Convert to 0.01% units for FTMS
-  int effectiveInclineUnits = static_cast<int>(effectiveGrade * 100);
+  // Clamp to valid trainer limits (-20% to +20%)
+  double clampedGradient = effectiveGradient;
+  if (clampedGradient < -20.0) clampedGradient = -20.0;
+  if (clampedGradient > 20.0) clampedGradient = 20.0;
   
-  // Update the target incline
-  rtConfig->setTargetIncline(effectiveInclineUnits);
+  // Convert to 0.01% units for rtConfig
+  int gradientUnits = static_cast<int>(clampedGradient * 100);
   
-  SS2K_LOG(BLE_SERVER_LOG_TAG, "KICKR BIKE: base=%.2f%%, gear=%.2f, effective=%.2f%%", 
-           baseIncline, getCurrentGearRatio(), effectiveGrade);
+  // Update the target incline directly
+  rtConfig->setTargetIncline(gradientUnits);
+  
+  SS2K_LOG(BLE_SERVER_LOG_TAG, "KICKR BIKE: Applied gradient %.2f%% (gear %d, ratio %.2f)", 
+           clampedGradient, currentGear + 1, getCurrentGearRatio());
+}
+
+void BLE_KickrBikeService::setTargetPower(int watts) {
+  targetPower = watts;
+  
+  // In ERG mode, the power is fixed and gears affect the "feel"
+  // This is handled by the trainer's power control logic
+  SS2K_LOG(BLE_SERVER_LOG_TAG, "KICKR BIKE: Target power set to %d watts", targetPower);
+}
+
+void BLE_KickrBikeService::updateTrainerPosition() {
+  // This method updates the physical trainer position based on effective gradient
+  // Only applies if the service is enabled and controlling the trainer
+  if (!isEnabled) {
+    return;
+  }
+  
+  applyGradientToTrainer();
 }
 
 double BLE_KickrBikeService::calculateEffectiveGrade(double baseGrade, double gearRatio) {
@@ -167,4 +220,59 @@ void BLE_KickrBikeService::updateGearFromShifterPosition() {
   
   // Update last position
   lastShifterPosition = currentShifterPosition;
+}
+
+bool BLE_KickrBikeService::isRideOnMessage(const std::string& data) {
+  // "RideOn" = 0x52 0x69 0x64 0x65 0x4f 0x6e
+  return data.length() == 6 &&
+         (uint8_t)data[0] == 0x52 &&  // 'R'
+         (uint8_t)data[1] == 0x69 &&  // 'i'
+         (uint8_t)data[2] == 0x64 &&  // 'd'
+         (uint8_t)data[3] == 0x65 &&  // 'e'
+         (uint8_t)data[4] == 0x4f &&  // 'O'
+         (uint8_t)data[5] == 0x6e;    // 'n'
+}
+
+void BLE_KickrBikeService::processWrite(const std::string& value) {
+  // Check if this is the RideOn handshake
+  if (isRideOnMessage(value)) {
+    SS2K_LOG(BLE_SERVER_LOG_TAG, "KICKR BIKE: Received RideOn handshake");
+    sendRideOnResponse();
+    isHandshakeComplete = true;
+    lastKeepAliveTime = millis();
+  } else {
+    // Log unknown writes for debugging
+    SS2K_LOG(BLE_SERVER_LOG_TAG, "KICKR BIKE: Received unknown write (%d bytes)", value.length());
+  }
+}
+
+void BLE_KickrBikeService::sendRideOnResponse() {
+  // Respond with "RideOn" + signature bytes (0x01 0x03)
+  uint8_t response[8] = {
+    0x52, 0x69, 0x64, 0x65, 0x4f, 0x6e,  // "RideOn"
+    0x01, 0x03                            // Signature
+  };
+  
+  syncTxCharacteristic->setValue(response, sizeof(response));
+  syncTxCharacteristic->notify();
+  
+  SS2K_LOG(BLE_SERVER_LOG_TAG, "KICKR BIKE: Sent RideOn response");
+}
+
+void BLE_KickrBikeService::sendKeepAlive() {
+  // Keep-alive message to maintain connection with Zwift
+  // This is a protobuf-encoded message that tells Zwift we're still alive
+  // The exact format comes from the BikeControl reference implementation
+  uint8_t keepAliveData[] = {
+    0xB7, 0x01, 0x00, 0x00, 0x20, 0x41, 0x20, 0x1C, 
+    0x00, 0x18, 0x00, 0x04, 0x00, 0x1B, 0x4F, 0x00, 
+    0xB7, 0x01, 0x00, 0x00, 0x20, 0x79, 0x8E, 0xC5, 
+    0xBD, 0xEF, 0xCB, 0xE4, 0x56, 0x34, 0x18, 0x26, 
+    0x9E, 0x49, 0x26, 0xFB, 0xE1
+  };
+  
+  syncTxCharacteristic->setValue(keepAliveData, sizeof(keepAliveData));
+  syncTxCharacteristic->notify();
+  
+  SS2K_LOG(BLE_SERVER_LOG_TAG, "KICKR BIKE: Sent keep-alive");
 }

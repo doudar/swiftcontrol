@@ -10,6 +10,9 @@
 #include <NimBLEDevice.h>
 #include "BLE_Common.h"
 
+// Forward declaration for custom callback
+class KickrBikeCharacteristicCallbacks;
+
 // Gear system configuration for virtual shifting
 #define KICKR_BIKE_NUM_GEARS 24
 #define KICKR_BIKE_DEFAULT_GEAR 11  // Middle gear (0-indexed, so gear 12 in 1-indexed)
@@ -29,6 +32,26 @@ class BLE_KickrBikeService {
   // Function to check shifter position and modify incline accordingly
   void updateGearFromShifterPosition();
   
+  // RideOn handshake handling
+  void processWrite(const std::string& value);
+  void sendRideOnResponse();
+  void sendKeepAlive();
+  
+  // Gradient/resistance control (independent of FTMS)
+  void setBaseGradient(double gradientPercent);
+  double getBaseGradient() const { return baseGradient; }
+  double getEffectiveGradient() const;
+  void applyGradientToTrainer();
+  
+  // Power control for ERG mode
+  void setTargetPower(int watts);
+  int getTargetPower() const { return targetPower; }
+  
+  // Enable/disable the service
+  void enable() { isEnabled = true; }
+  void disable() { isEnabled = false; }
+  bool isServiceEnabled() const { return isEnabled; }
+  
  private:
   BLEService *pKickrBikeService;
   BLECharacteristic *syncRxCharacteristic;   // Write characteristic for commands
@@ -38,19 +61,35 @@ class BLE_KickrBikeService {
   // Gear system state
   int currentGear;
   int lastShifterPosition;
-  double baseFTMSIncline;  // Store the base incline set by FTMS before gear modification
+  
+  // Gradient and resistance state (independent of FTMS)
+  double baseGradient;        // Base gradient set by Zwift (%)
+  double effectiveGradient;   // Gradient after gear ratio applied (%)
+  int targetPower;            // Target power for ERG mode (watts)
+  
+  // Service state
+  bool isHandshakeComplete;
+  bool isEnabled;  // Whether this service should control the trainer
+  unsigned long lastKeepAliveTime;
+  unsigned long lastGradientUpdateTime;
   
   // Gear ratio table (24 gears)
   static const double gearRatios[KICKR_BIKE_NUM_GEARS];
   
   // Helper methods
   void applyGearChange();
-  void updateFTMSIncline();
   double calculateEffectiveGrade(double baseGrade, double gearRatio);
-  
-  // Allow FTMS service to notify us of base incline changes
-  friend class BLE_Fitness_Machine_Service;
-  void setBaseFTMSIncline(double incline) { baseFTMSIncline = incline; }
+  bool isRideOnMessage(const std::string& data);
+  void updateTrainerPosition();
+};
+
+// Custom callback class for KickrBike Sync RX characteristic
+class KickrBikeCharacteristicCallbacks : public NimBLECharacteristicCallbacks {
+ public:
+  void onWrite(NimBLECharacteristic* pCharacteristic, NimBLEConnInfo& connInfo) override {
+    std::string rxValue = pCharacteristic->getValue();
+    kickrBikeService.processWrite(rxValue);
+  }
 };
 
 extern BLE_KickrBikeService kickrBikeService;

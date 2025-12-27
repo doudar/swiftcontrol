@@ -5,7 +5,6 @@
  * SPDX-License-Identifier: GPL-2.0-only
  */
 #include "BLE_Fitness_Machine_Service.h"
-#include "BLE_KickrBikeService.h"
 #include "DirConManager.h"
 #include "Main.h"
 #include <Constants.h>
@@ -182,15 +181,7 @@ void BLE_Fitness_Machine_Service::processFTMSWrite() {
           returnValue[2] = FitnessMachineControlPointResultCode::Success;
           int16_t rawInclineTenthsPercent = (int16_t)((rxValue[2] << 8) | rxValue[1]); // signed 0.1% units
           port                            = static_cast<int>(rawInclineTenthsPercent) * 10; // convert to 0.01% units
-          
-          // Store base incline in KickrBike service for gear calculations
-          double baseInclinePercent = port / 100.0;
-          kickrBikeService.setBaseFTMSIncline(baseInclinePercent);
-          
-          // Let KickrBike service apply gear modification to the incline
           rtConfig->setTargetIncline(port);
-          kickrBikeService.updateFTMSIncline();
-          
           logBufLength += snprintf(logBuf + logBufLength,
                                    kLogBufCapacity - logBufLength,
                                    "-> Incline Mode: %2f",
@@ -295,15 +286,7 @@ void BLE_Fitness_Machine_Service::processFTMSWrite() {
           // int8_t rollingResistance = rxValue[5];
           // int8_t windResistance    = rxValue[6];
           port = bytes_to_u16(buf[1], buf[0]);
-          
-          // Store base incline in KickrBike service for gear calculations
-          double baseInclinePercent = port / 100.0;
-          kickrBikeService.setBaseFTMSIncline(baseInclinePercent);
-          
-          // Let KickrBike service apply gear modification to the incline
           rtConfig->setTargetIncline(port);
-          kickrBikeService.updateFTMSIncline();
-          
           logBufLength += snprintf(logBuf + logBufLength, kLogBufCapacity - logBufLength, "-> Sim Mode Incline %2f", rtConfig->getTargetIncline() / 100);
           ftmsStatus = {FitnessMachineStatus::IndoorBikeSimulationParametersChanged,
                         (uint8_t)rxValue[1],
