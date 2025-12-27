@@ -37,6 +37,14 @@ class BLE_KickrBikeService {
   void sendRideOnResponse();
   void sendKeepAlive();
   
+  // Opcode message handlers
+  void handleGetRequest(const uint8_t* data, size_t length);
+  void handleReset();
+  void handleSetLogLevel(const uint8_t* data, size_t length);
+  void handleVendorMessage(const uint8_t* data, size_t length);
+  void sendGetResponse(uint16_t objectId, const uint8_t* data, size_t length);
+  void sendStatusResponse(uint8_t status);
+  
   // Gradient/resistance control (independent of FTMS)
   void setBaseGradient(double gradientPercent);
   double getBaseGradient() const { return baseGradient; }

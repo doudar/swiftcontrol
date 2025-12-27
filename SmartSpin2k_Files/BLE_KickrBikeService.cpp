@@ -234,15 +234,55 @@ bool BLE_KickrBikeService::isRideOnMessage(const std::string& data) {
 }
 
 void BLE_KickrBikeService::processWrite(const std::string& value) {
-  // Check if this is the RideOn handshake
+  if (value.empty()) {
+    SS2K_LOG(BLE_SERVER_LOG_TAG, "KICKR BIKE: Received empty write");
+    return;
+  }
+  
+  // Check if this is the RideOn handshake (no opcode, just raw bytes)
   if (isRideOnMessage(value)) {
     SS2K_LOG(BLE_SERVER_LOG_TAG, "KICKR BIKE: Received RideOn handshake");
     sendRideOnResponse();
     isHandshakeComplete = true;
     lastKeepAliveTime = millis();
-  } else {
-    // Log unknown writes for debugging
-    SS2K_LOG(BLE_SERVER_LOG_TAG, "KICKR BIKE: Received unknown write (%d bytes)", value.length());
+    return;
+  }
+  
+  // Process opcode-based messages
+  uint8_t opcode = (uint8_t)value[0];
+  const uint8_t* messageData = (const uint8_t*)value.data() + 1;
+  size_t messageLength = value.length() - 1;
+  
+  switch (opcode) {
+    case 0x08:  // GET - Request data object
+      handleGetRequest(messageData, messageLength);
+      break;
+      
+    case 0x22:  // RESET - Reset device
+      handleReset();
+      break;
+      
+    case 0x41:  // LOG_LEVEL_SET - Set log level
+      handleSetLogLevel(messageData, messageLength);
+      break;
+      
+    case 0x32:  // VENDOR_MESSAGE - Vendor-specific message
+      handleVendorMessage(messageData, messageLength);
+      break;
+      
+    case 0x07:  // CONTROLLER_NOTIFICATION - Button events (shouldn't be written to us, we send these)
+      SS2K_LOG(BLE_SERVER_LOG_TAG, "KICKR BIKE: Unexpected CONTROLLER_NOTIFICATION write");
+      break;
+      
+    case 0x19:  // BATTERY_NOTIF - Battery updates (shouldn't be written to us, we send these)
+      SS2K_LOG(BLE_SERVER_LOG_TAG, "KICKR BIKE: Unexpected BATTERY_NOTIF write");
+      break;
+      
+    default:
+      // Log unknown opcodes for debugging
+      SS2K_LOG(BLE_SERVER_LOG_TAG, "KICKR BIKE: Received unknown opcode 0x%02X (%d bytes)", 
+               opcode, value.length());
+      break;
   }
 }
 
@@ -275,4 +315,110 @@ void BLE_KickrBikeService::sendKeepAlive() {
   syncTxCharacteristic->notify();
   
   SS2K_LOG(BLE_SERVER_LOG_TAG, "KICKR BIKE: Sent keep-alive");
+}
+
+// Opcode message handlers
+
+void BLE_KickrBikeService::handleGetRequest(const uint8_t* data, size_t length) {
+  // GET request - Zwift is requesting a data object
+  // The data should contain an object ID (protobuf encoded)
+  
+  if (length < 1) {
+    SS2K_LOG(BLE_SERVER_LOG_TAG, "KICKR BIKE: GET request with no data");
+    sendStatusResponse(0x02);  // Error status
+    return;
+  }
+  
+  // For now, we'll parse a simple object ID from the first bytes
+  // In a full implementation, this would be protobuf decoded
+  uint16_t objectId = 0;
+  if (length >= 2) {
+    objectId = ((uint16_t)data[1] << 8) | data[0];
+  } else {
+    objectId = data[0];
+  }
+  
+  SS2K_LOG(BLE_SERVER_LOG_TAG, "KICKR BIKE: GET request for object ID 0x%04X", objectId);
+  
+  // Respond with empty data for now (full implementation would return actual object data)
+  sendGetResponse(objectId, nullptr, 0);
+}
+
+void BLE_KickrBikeService::handleReset() {
+  // RESET command - Reset the device to default state
+  SS2K_LOG(BLE_SERVER_LOG_TAG, "KICKR BIKE: RESET command received");
+  
+  // Reset to default gear
+  currentGear = KICKR_BIKE_DEFAULT_GEAR;
+  baseGradient = 0.0;
+  effectiveGradient = 0.0;
+  targetPower = 0;
+  
+  // Apply reset state to trainer
+  if (isEnabled) {
+    applyGradientToTrainer();
+  }
+  
+  // Send success status
+  sendStatusResponse(0x00);  // Success
+}
+
+void BLE_KickrBikeService::handleSetLogLevel(const uint8_t* data, size_t length) {
+  // LOG_LEVEL_SET - Set logging level
+  if (length < 1) {
+    SS2K_LOG(BLE_SERVER_LOG_TAG, "KICKR BIKE: SET_LOG_LEVEL with no data");
+    return;
+  }
+  
+  uint8_t logLevel = data[0];
+  SS2K_LOG(BLE_SERVER_LOG_TAG, "KICKR BIKE: SET_LOG_LEVEL to %d", logLevel);
+  
+  // For now, just acknowledge - full implementation would adjust logging
+  sendStatusResponse(0x00);  // Success
+}
+
+void BLE_KickrBikeService::handleVendorMessage(const uint8_t* data, size_t length) {
+  // VENDOR_MESSAGE - Vendor-specific message
+  SS2K_LOG(BLE_SERVER_LOG_TAG, "KICKR BIKE: VENDOR_MESSAGE received (%d bytes)", length);
+  
+  // Log the message content for debugging
+  if (length > 0) {
+    SS2K_LOG(BLE_SERVER_LOG_TAG, "KICKR BIKE: Vendor message first byte: 0x%02X", data[0]);
+  }
+  
+  // Send success status
+  sendStatusResponse(0x00);
+}
+
+void BLE_KickrBikeService::sendGetResponse(uint16_t objectId, const uint8_t* data, size_t length) {
+  // Send GET_RESPONSE (opcode 0x3C) with the requested object data
+  std::vector<uint8_t> response;
+  response.push_back(0x3C);  // GET_RESPONSE opcode
+  
+  // Add object ID (little-endian)
+  response.push_back(objectId & 0xFF);
+  response.push_back((objectId >> 8) & 0xFF);
+  
+  // Add data if provided
+  if (data && length > 0) {
+    response.insert(response.end(), data, data + length);
+  }
+  
+  syncTxCharacteristic->setValue(response.data(), response.size());
+  syncTxCharacteristic->notify();
+  
+  SS2K_LOG(BLE_SERVER_LOG_TAG, "KICKR BIKE: Sent GET_RESPONSE for object 0x%04X", objectId);
+}
+
+void BLE_KickrBikeService::sendStatusResponse(uint8_t status) {
+  // Send STATUS_RESPONSE (opcode 0x12) with status code
+  uint8_t response[2] = {
+    0x12,   // STATUS_RESPONSE opcode
+    status  // Status code (0x00 = success, others = error)
+  };
+  
+  syncTxCharacteristic->setValue(response, sizeof(response));
+  syncTxCharacteristic->notify();
+  
+  SS2K_LOG(BLE_SERVER_LOG_TAG, "KICKR BIKE: Sent STATUS_RESPONSE (status: 0x%02X)", status);
 }

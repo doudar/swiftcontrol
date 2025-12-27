@@ -10,6 +10,7 @@ This implementation provides a **fully independent** KICKR BIKE compatible BLE s
 - **Independent Gradient Control**: Directly controls trainer resistance without relying on FTMS
 - **RideOn Handshake Protocol**: Full implementation of Zwift's connection handshake
 - **Keep-Alive Messages**: Maintains connection with Zwift via periodic heartbeat messages
+- **Opcode Message Handling**: Processes GET, RESET, LOG_LEVEL_SET, and VENDOR_MESSAGE opcodes from Zwift
 - **Shifter Position Monitoring**: Monitors `rtConfig->getShifterPosition()` for gear change inputs
 - **Fully Self-Contained**: Does not require or interfere with FTMS service
 
@@ -30,6 +31,35 @@ The service implements three BLE characteristics according to the KICKR BIKE pro
 3. **Sync TX** (UUID: `00000004-19CA-4651-86E5-FA29DCDD09D1`)
    - Notify characteristic for synchronous responses
    - Used for protocol handshakes and responses
+
+### Protocol Messages
+
+The service handles several types of protocol messages:
+
+#### Handshake (RideOn)
+- **Received**: Raw bytes "RideOn" (0x52 0x69 0x64 0x65 0x4f 0x6e)
+- **Response**: "RideOn" + signature (0x01 0x03)
+- **Purpose**: Establishes connection with Zwift
+
+#### Opcode-Based Messages
+All messages after handshake use an opcode prefix:
+
+- **0x08 (GET)**: Request for data object
+  - Zwift requests device information
+  - Response: GET_RESPONSE (0x3C) with requested data
+
+- **0x22 (RESET)**: Reset device to default state
+  - Resets to default gear (12)
+  - Clears gradient and power settings
+  - Response: STATUS_RESPONSE (0x12) with success
+
+- **0x41 (LOG_LEVEL_SET)**: Set logging level
+  - Adjusts debug output verbosity
+  - Response: STATUS_RESPONSE (0x12) with success
+
+- **0x32 (VENDOR_MESSAGE)**: Vendor-specific commands
+  - Custom protocol extensions
+  - Response: STATUS_RESPONSE (0x12) with success
 
 ### Gear System
 
