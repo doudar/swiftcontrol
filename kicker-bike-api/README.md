@@ -43,11 +43,20 @@ The KICKR BIKE protocol allows Zwift to connect to a smart trainer over the netw
 
 This specification is organized into the following documents:
 
+### Quick Start
+
+0. **[QUICK_REFERENCE.md](QUICK_REFERENCE.md)** - ⚡ Quick reference for experienced developers
+
+### Core Documentation
+
 1. **[MDNS_SERVICE.md](MDNS_SERVICE.md)** - mDNS service advertisement and discovery
 2. **[TCP_PROTOCOL.md](TCP_PROTOCOL.md)** - TCP/IP message framing and protocol
 3. **[BLE_GATT.md](BLE_GATT.md)** - GATT service and characteristic simulation
 4. **[ZWIFT_RIDE_PROTOCOL.md](ZWIFT_RIDE_PROTOCOL.md)** - Zwift Ride controller messages
 5. **[GEAR_AND_INCLINE.md](GEAR_AND_INCLINE.md)** - Gear changes and incline handling (with examples)
+
+### Implementation Support
+
 6. **[IMPLEMENTATION_GUIDE.md](IMPLEMENTATION_GUIDE.md)** - Step-by-step implementation for FTMS trainers
 7. **[TROUBLESHOOTING.md](TROUBLESHOOTING.md)** - Common issues and debugging
 
