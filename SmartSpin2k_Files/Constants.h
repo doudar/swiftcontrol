@@ -91,6 +91,13 @@
 #define PELOTON_REQ_POS      1
 #define PELOTON_CHECKSUM_POS 2
 
+// Zwift Ride / KICKR BIKE Service
+// This service emulates the Wahoo KICKR BIKE protocol for virtual shifting
+#define ZWIFT_RIDE_SERVICE_UUID NimBLEUUID("0000FC82-0000-1000-8000-00805F9B34FB")
+#define ZWIFT_SYNC_RX_UUID      NimBLEUUID("00000003-19CA-4651-86E5-FA29DCDD09D1")  // Write characteristic
+#define ZWIFT_ASYNC_TX_UUID     NimBLEUUID("00000002-19CA-4651-86E5-FA29DCDD09D1")  // Notify characteristic
+#define ZWIFT_SYNC_TX_UUID      NimBLEUUID("00000004-19CA-4651-86E5-FA29DCDD09D1")  // Notify characteristic
+
 // BLE HID
 #define APPEARANCE_HID_GENERIC_UUID             NimBLEUUID((uint16_t)0x3C0)
 #define APPEARANCE_HID_KEYBOARD_UUID            NimBLEUUID((uint16_t)0x3C1)
