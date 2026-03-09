@@ -6,16 +6,17 @@ import 'package:bike_control/bluetooth/devices/gamepad/gamepad_device.dart';
 import 'package:bike_control/bluetooth/devices/gyroscope/gyroscope_steering.dart';
 import 'package:bike_control/bluetooth/devices/hid/hid_device.dart';
 import 'package:bike_control/bluetooth/devices/wahoo/wahoo_kickr_headwind.dart';
-import 'package:bike_control/bluetooth/devices/zwift/ftms_mdns_emulator.dart';
-import 'package:bike_control/bluetooth/devices/zwift/protocol/zp.pb.dart';
 import 'package:bike_control/gen/l10n.dart';
 import 'package:bike_control/main.dart';
 import 'package:bike_control/utils/core.dart';
+import 'package:bike_control/utils/iap/iap_manager.dart';
+import 'package:bike_control/utils/interpreter.dart';
 import 'package:bike_control/utils/requirements/android.dart';
 import 'package:dartx/dartx.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:gamepads/gamepads.dart';
+import 'package:prop/prop.dart';
 import 'package:universal_ble/universal_ble.dart';
 
 import 'devices/base_device.dart';
@@ -49,6 +50,8 @@ class Connection {
   final Map<BaseDevice, StreamSubscription<bool>> _connectionSubscriptions = {};
   final StreamController<BaseDevice> _connectionStreams = StreamController<BaseDevice>.broadcast();
   Stream<BaseDevice> get connectionStream => _connectionStreams.stream;
+  final StreamController<BluetoothDevice> _rssiConnectionStreams = StreamController<BluetoothDevice>.broadcast();
+  Stream<BluetoothDevice> get rssiConnectionStream => _rssiConnectionStreams.stream;
 
   final _lastScanResult = <BleDevice>[];
   final ValueNotifier<bool> hasDevices = ValueNotifier(false);
@@ -61,6 +64,12 @@ class Connection {
       lastLogEntries.add((date: DateTime.now(), entry: log.toString()));
       lastLogEntries = lastLogEntries.takeLast(kIsWeb ? 1000 : 60).toList();
     });
+
+    if (!kIsWeb && (Platform.isMacOS || Platform.isWindows || Platform.isIOS)) {
+      core.mediaKeyHandler.initialize();
+      // Load saved media key detection state
+      core.mediaKeyHandler.isMediaKeyDetectionEnabled.value = core.settings.getMediaKeyDetectionEnabled();
+    }
 
     UniversalBle.onAvailabilityChange = (available) {
       _actionStreams.add(BluetoothAvailabilityNotification(available == AvailabilityState.poweredOn));
@@ -82,30 +91,42 @@ class Connection {
       );
       if (existingDevice != null && existingDevice.rssi != result.rssi) {
         existingDevice.rssi = result.rssi;
-        _connectionStreams.add(existingDevice); // Notify UI of update
+        _rssiConnectionStreams.add(existingDevice); // Notify UI of update
       }
 
       if (_lastScanResult.none((e) => e.deviceId == result.deviceId && e.services.contentEquals(result.services))) {
         _lastScanResult.add(result);
 
         if (kDebugMode) {
-          debugPrint('Scan result: ${result.name} - ${result.deviceId}');
+          debugPrint('Scan result: ${result.name} - ${result.deviceId} - Services: ${result.services}');
         }
 
-        final scanResult = BluetoothDevice.fromScanResult(result);
+        try {
+          final scanResult = BluetoothDevice.fromScanResult(result);
 
-        if (scanResult != null) {
-          _actionStreams.add(LogNotification('Found new device: ${kIsWeb ? scanResult.name : scanResult.runtimeType}'));
-          addDevices([scanResult]);
-        } else {
-          final manufacturerData = result.manufacturerDataList;
-          final data = manufacturerData
-              .firstOrNullWhere((e) => e.companyId == ZwiftConstants.ZWIFT_MANUFACTURER_ID)
-              ?.payload;
-          if (data != null && kDebugMode) {
+          if (scanResult != null) {
             _actionStreams.add(
-              LogNotification('Found unknown device ${result.name} with identifier: ${data.firstOrNull}'),
+              LogNotification('Found new device: ${kIsWeb ? scanResult.toString() : scanResult.runtimeType}'),
             );
+            addDevices([scanResult]);
+          } else {
+            final manufacturerData = result.manufacturerDataList;
+            final data = manufacturerData
+                .firstOrNullWhere((e) => e.companyId == ZwiftConstants.ZWIFT_MANUFACTURER_ID)
+                ?.payload;
+            if (data != null && kDebugMode) {
+              _actionStreams.add(
+                LogNotification('Found unknown device ${result.name} with identifier: ${data.firstOrNull}'),
+              );
+            }
+          }
+        } catch (e, backtrace) {
+          _actionStreams.add(
+            LogNotification("Error processing scan result for device ${result.deviceId}: $e\n$backtrace"),
+          );
+          if (kDebugMode) {
+            print(e);
+            print("backtrace: $backtrace");
           }
         }
       }
@@ -122,7 +143,7 @@ class Connection {
           // on web, log all characteristic changes for debugging
           _actionStreams.add(
             LogNotification(
-              'Characteristic update for device ${device.name}, char: $characteristicUuid, value: ${bytesToReadableHex(value)}',
+              'Characteristic update for device ${device.toString()}, char: $characteristicUuid, value: ${bytesToReadableHex(value)}',
             ),
           );
         }
@@ -131,7 +152,25 @@ class Connection {
         } catch (e, backtrace) {
           _actionStreams.add(
             LogNotification(
-              "Error processing characteristic for device ${device.name} and char: $characteristicUuid: $e\n$backtrace",
+              "Error processing characteristic for device ${device.toString()} and char: $characteristicUuid: $e\n$backtrace",
+            ),
+          );
+          if (kDebugMode) {
+            print(e);
+            print("backtrace: $backtrace");
+          }
+        }
+
+        try {
+          await _runCustomDeviceScript(
+            device: device,
+            characteristicUuid: characteristicUuid,
+            value: value,
+          );
+        } catch (e, backtrace) {
+          _actionStreams.add(
+            LogNotification(
+              "Error executing script for ${device.runtimeType} and char: $characteristicUuid: $e\n$backtrace",
             ),
           );
           if (kDebugMode) {
@@ -213,6 +252,68 @@ class Connection {
     }
   }
 
+  Future<void> _runCustomDeviceScript({
+    required BluetoothDevice device,
+    required String characteristicUuid,
+    required Uint8List value,
+  }) async {
+    if (!IAPManager.instance.isPurchased.value && !IAPManager.instance.hasActiveSubscription) {
+      return;
+    }
+
+    final scriptOutput = await DeviceScriptService.instance.runCustomScript(
+      deviceType: device.runtimeType.toString(),
+      characteristicUuid: characteristicUuid,
+      data: value,
+    );
+
+    if (scriptOutput == null) {
+      return;
+    }
+
+    final serviceUuid = device.serviceUuidForCharacteristic(scriptOutput.characteristicUuid);
+    if (serviceUuid == null) {
+      _actionStreams.add(
+        LogNotification(
+          'Script output characteristic ${scriptOutput.characteristicUuid} was not found on ${device.runtimeType}.',
+        ),
+      );
+      return;
+    }
+
+    final characteristic = device.services
+        ?.firstOrNullWhere((s) => s.uuid == serviceUuid)
+        ?.characteristics
+        .firstOrNullWhere((c) => c.uuid == scriptOutput.characteristicUuid);
+
+    if (characteristic == null) {
+      _actionStreams.add(
+        LogNotification(
+          'Script output characteristic ${scriptOutput.characteristicUuid} was not found on ${device.runtimeType}.',
+        ),
+      );
+      return;
+    } else if (!characteristic.properties.containsAny([
+      CharacteristicProperty.write,
+      CharacteristicProperty.writeWithoutResponse,
+    ])) {
+      _actionStreams.add(
+        LogNotification(
+          'Script output characteristic ${scriptOutput.characteristicUuid} on ${device.runtimeType} does not support writing.',
+        ),
+      );
+      return;
+    }
+
+    await UniversalBle.write(
+      device.device.deviceId,
+      serviceUuid,
+      scriptOutput.characteristicUuid,
+      scriptOutput.data,
+      withoutResponse: characteristic.properties.contains(CharacteristicProperty.writeWithoutResponse) == true,
+    );
+  }
+
   Future<void> startMyWhooshServer() {
     return core.whooshLink.startServer().catchError((e) {
       core.settings.setMyWhooshLinkEnabled(false);
@@ -266,11 +367,11 @@ class Connection {
     if (_connectionQueue.isNotEmpty && !_handlingConnectionQueue && !screenshotMode) {
       _handlingConnectionQueue = true;
       final device = _connectionQueue.removeAt(0);
-      _actionStreams.add(AlertNotification(LogLevel.LOGLEVEL_INFO, 'Connecting to: ${device.name}'));
+      _actionStreams.add(AlertNotification(LogLevel.LOGLEVEL_INFO, 'Connecting to: ${device.toString()}'));
       _connect(device)
           .then((_) {
             _handlingConnectionQueue = false;
-            _actionStreams.add(AlertNotification(LogLevel.LOGLEVEL_INFO, 'Connection finished: ${device.name}'));
+            _actionStreams.add(AlertNotification(LogLevel.LOGLEVEL_INFO, 'Connection finished: ${device.toString()}'));
             if (_connectionQueue.isNotEmpty) {
               _handleConnectionQueue();
             }
@@ -280,11 +381,11 @@ class Connection {
             _handlingConnectionQueue = false;
             if (e is TimeoutException) {
               _actionStreams.add(
-                AlertNotification(LogLevel.LOGLEVEL_WARNING, 'Unable to connect to ${device.name}: Timeout'),
+                AlertNotification(LogLevel.LOGLEVEL_WARNING, 'Unable to connect to ${device.toString()}: Timeout'),
               );
             } else {
               _actionStreams.add(
-                AlertNotification(LogLevel.LOGLEVEL_ERROR, 'Connection failed: ${device.name} - $e'),
+                AlertNotification(LogLevel.LOGLEVEL_ERROR, 'Connection failed: ${device.toString()} - $e'),
               );
             }
             if (_connectionQueue.isNotEmpty) {
@@ -305,11 +406,11 @@ class Connection {
           _connectionStreams.add(device);
           core.flutterLocalNotificationsPlugin.show(
             1338,
-            '${device.name} ${state ? AppLocalizations.current.connected.decapitalize() : AppLocalizations.current.disconnected.decapitalize()}',
+            '${device.toString()} ${state ? AppLocalizations.current.connected.decapitalize() : AppLocalizations.current.disconnected.decapitalize()}',
             !state ? AppLocalizations.current.tryingToConnectAgain : null,
             NotificationDetails(
               android: AndroidNotificationDetails('Connection', 'Connection Status'),
-              iOS: DarwinNotificationDetails(presentAlert: true),
+              iOS: DarwinNotificationDetails(presentAlert: true, presentSound: false),
             ),
           );
           if (!device.isConnected) {
@@ -323,6 +424,8 @@ class Connection {
 
       await device.connect();
       signalChange(device);
+
+      IAPManager.instance.setAttributes();
 
       core.actionHandler.supportedApp?.keymap.addNewButtons(device.availableButtons);
 
@@ -361,8 +464,8 @@ class Connection {
     if (device is BluetoothDevice) {
       if (persistForget) {
         // Add device to ignored list when forgetting
-        await core.settings.addIgnoredDevice(device.device.deviceId, device.name);
-        _actionStreams.add(LogNotification('Device ignored: ${device.name}'));
+        await core.settings.addIgnoredDevice(device.device.deviceId, device.toString());
+        _actionStreams.add(LogNotification('Device ignored: ${device.toString()}'));
       }
       if (!forget) {
         // allow reconnection

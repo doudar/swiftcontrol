@@ -14,7 +14,7 @@ class Rouvy extends SupportedApp {
   Rouvy()
     : super(
         name: 'Rouvy',
-        packageName: "eu.virtualtraining.rouvy.android",
+        packageName: "Rouvy",
         compatibleTargets: !kIsWeb && Platform.isIOS ? [Target.otherDevice] : Target.values,
         supportsZwiftEmulation: !kIsWeb && Platform.isAndroid,
         star: true,
@@ -49,6 +49,18 @@ class Rouvy extends SupportedApp {
               physicalKey: PhysicalKeyboardKey.keyB,
               logicalKey: LogicalKeyboardKey.keyB,
               inGameAction: InGameAction.back,
+            ),
+            KeyPair(
+              buttons: [ZwiftButtons.a],
+              physicalKey: PhysicalKeyboardKey.keyY,
+              logicalKey: LogicalKeyboardKey.keyY,
+              inGameAction: InGameAction.kudos,
+            ),
+            KeyPair(
+              buttons: [ZwiftButtons.y],
+              physicalKey: PhysicalKeyboardKey.keyZ,
+              logicalKey: LogicalKeyboardKey.keyZ,
+              inGameAction: InGameAction.pause,
             ),
           ],
         ),

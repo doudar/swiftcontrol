@@ -21,6 +21,17 @@ jobs:
       #1 Checkout Repository
       - name: Checkout Repository
         uses: actions/checkout@v3
+        with:
+          submodules: recursive
+          token: ${{ secrets.PAT_TOKEN }}
+
+      - name: rename pubspec_overrides_ci.yaml to pubspec_overrides.yaml
+        run: |
+          if [ -f pubspec_overrides_ci.yaml ]; then
+              mv pubspec_overrides_ci.yaml pubspec_overrides.yaml
+          else 
+              echo "No pubspec_overrides_ci.yaml found, skipping rename."
+          fi
 
       - name: 🐦 Setup Shorebird
         uses: shorebirdtech/setup-shorebird@v1
@@ -86,70 +97,26 @@ jobs:
           echo "${{ secrets.KEYSTORE_PROPERTIES }}" > android/keystore.properties;
 
       - name: 🚀 Shorebird Patch macOS
-        if: false # patch doesn't work: https://github.com/jonasbark/swiftcontrol/issues/143
+        if: false # patch doesn't work: https://github.com/OpenBikeControl/bikecontrol/issues/143
         uses: shorebirdtech/shorebird-patch@v1
         with:
           platform: macos
           release-version: latest
-          args: '--allow-asset-diffs --allow-native-diffs'
+          args: '--allow-asset-diffs --allow-native-diffs --obfuscate --split-debug-info=symbols -- --dart-define=VERIFYING_SHARED_SECRET=${{ secrets.VERIFYING_SHARED_SECRET }} --dart-define=REVENUECAT_API_KEY_IOS=${{ secrets.REVENUECAT_API_KEY_IOS }} --dart-define=SUPABASE_ANON_KEY=${{ secrets.SUPABASE_ANON_KEY }}'
 
       - name: 🚀 Shorebird Patch Android
         uses: shorebirdtech/shorebird-patch@v1
         with:
           platform: android
           release-version: latest
-          args: '--allow-asset-diffs --allow-native-diffs'
+          args: '--allow-asset-diffs --allow-native-diffs --obfuscate --split-debug-info=symbols -- --dart-define=REVENUECAT_API_KEY_ANDROID=${{ secrets.REVENUECAT_API_KEY_ANDROID }} --dart-define=SUPABASE_ANON_KEY=${{ secrets.SUPABASE_ANON_KEY }}'
 
       - name: 🚀 Shorebird Patch iOS
         uses: shorebirdtech/shorebird-patch@v1
         with:
           platform: ios
           release-version: latest
-          args: '--allow-asset-diffs --allow-native-diffs'
-
-      # shorebird struggles with the app from GitHub
-      - name: Build macOS
-        if: false
-        run: flutter build macos --release;
-
-      - name: Sign macOS build
-        if: false
-        env:
-          DEVELOPER_ID_APPLICATION_SIGNING_IDENTITY: ${{ secrets.DEVELOPER_ID_APPLICATION_SIGNING_IDENTITY }}
-        run: |
-          version=$(grep '^version: ' pubspec.yaml | cut -d ' ' -f 2 | tr -d '\r');
-          echo "VERSION=$version" >> $GITHUB_ENV;
-          cd build/macos/Build/Products/Release/;
-          /usr/bin/codesign --deep --force -s "$DEVELOPER_ID_APPLICATION_SIGNING_IDENTITY" --entitlements ../../../../../macos/Runner/Release.entitlements --options runtime BikeControl.app -v;
-          zip -r BikeControl.macos.zip BikeControl.app/;
-
-      #9 Upload Artifacts
-      - name: Upload Artifacts
-        if: false
-        uses: actions/upload-artifact@v4
-        with:
-          overwrite: true
-          name: Releases
-          path: |
-            build/macos/Build/Products/Release/BikeControl.macos.zip
-
-      - name: Generate release body
-        if: false
-        run: |
-          chmod +x scripts/generate_release_body.sh
-          ./scripts/generate_release_body.sh > /tmp/release_body.md
-
-      # add artifact to release
-      - name: Create Release
-        if: false
-        uses: ncipollo/release-action@v1
-        with:
-          allowUpdates: true
-          artifacts: "build/macos/Build/Products/Release/BikeControl.macos.zip"
-          bodyFile: /tmp/release_body.md
-          prerelease: true
-          tag: v${{ env.VERSION }}
-          token: ${{ secrets.TOKEN }}
+          args: '--allow-asset-diffs --allow-native-diffs --obfuscate --split-debug-info=symbols -- --dart-define=VERIFYING_SHARED_SECRET=${{ secrets.VERIFYING_SHARED_SECRET }} --dart-define=REVENUECAT_API_KEY_IOS=${{ secrets.REVENUECAT_API_KEY_IOS }}'
 
   windows:
     name: Patch Windows
@@ -159,6 +126,18 @@ jobs:
       #1 Checkout Repository
       - name: Checkout Repository
         uses: actions/checkout@v3
+        with:
+          submodules: recursive
+          token: ${{ secrets.PAT_TOKEN }}
+
+      - name: rename pubspec_overrides_ci.yaml to pubspec_overrides.yaml
+        shell: pwsh
+        run: |
+          if (Test-Path pubspec_overrides_ci.yaml) {
+              Rename-Item -Path pubspec_overrides_ci.yaml -NewName pubspec_overrides.yaml
+          } else {
+              Write-Output "No pubspec_overrides_ci.yaml found, skipping rename."
+          }
 
       - name: 🐦 Setup Shorebird
         uses: shorebirdtech/setup-shorebird@v1
@@ -181,4 +160,4 @@ jobs:
         with:
           platform: windows
           release-version: latest
-          args: '--allow-asset-diffs --allow-native-diffs'
+          args: '--allow-asset-diffs --allow-native-diffs --obfuscate --split-debug-info=symbols --  --dart-define=SUPABASE_ANON_KEY=${{ secrets.SUPABASE_ANON_KEY }}'

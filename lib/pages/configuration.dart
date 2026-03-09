@@ -16,8 +16,9 @@ import 'package:flutter/foundation.dart';
 import 'package:shadcn_flutter/shadcn_flutter.dart';
 
 class ConfigurationPage extends StatefulWidget {
+  final bool onboardingMode;
   final VoidCallback onUpdate;
-  const ConfigurationPage({super.key, required this.onUpdate});
+  const ConfigurationPage({super.key, required this.onUpdate, this.onboardingMode = false});
 
   @override
   State<ConfigurationPage> createState() => _ConfigurationPageState();
@@ -28,6 +29,7 @@ class _ConfigurationPageState extends State<ConfigurationPage> {
   Widget build(BuildContext context) {
     return Column(
       spacing: 12,
+      mainAxisSize: MainAxisSize.min,
       mainAxisAlignment: MainAxisAlignment.start,
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -51,7 +53,7 @@ class _ConfigurationPageState extends State<ConfigurationPage> {
                         spacing: 4,
                         children: [
                           Text(screenshotMode ? 'Trainer app' : app.name),
-                          if (app.supportsOpenBikeProtocol) Icon(Icons.star),
+                          if (app.supportsOpenBikeProtocol.isNotEmpty) Icon(Icons.star),
                         ],
                       ),
                       popup: SelectPopup(
@@ -63,7 +65,7 @@ class _ConfigurationPageState extends State<ConfigurationPage> {
                                 spacing: 4,
                                 children: [
                                   Text(app.name),
-                                  if (app.supportsOpenBikeProtocol) Icon(Icons.star),
+                                  if (app.supportsOpenBikeProtocol.isNotEmpty) Icon(Icons.star),
                                 ],
                               ),
                             );
@@ -86,7 +88,7 @@ class _ConfigurationPageState extends State<ConfigurationPage> {
                             core.zwiftEmulator.stopAdvertising();
                           }
                         }
-                        if (!selectedApp.supportsOpenBikeProtocol) {
+                        if (selectedApp.supportsOpenBikeProtocol.isEmpty) {
                           if (core.obpMdnsEmulator.isStarted.value) {
                             core.obpMdnsEmulator.stopServer();
                           }
@@ -111,7 +113,9 @@ class _ConfigurationPageState extends State<ConfigurationPage> {
                       },
                     ),
                     if (core.settings.getTrainerApp() != null) ...[
-                      if (core.settings.getTrainerApp()!.supportsOpenBikeProtocol == true && !screenshotMode)
+                      if (core.settings.getTrainerApp()!.supportsOpenBikeProtocol.isNotEmpty &&
+                          !screenshotMode &&
+                          !widget.onboardingMode)
                         Text(
                           AppLocalizations.of(context).openBikeControlAnnouncement(core.settings.getTrainerApp()!.name),
                         ).xSmall,
@@ -162,7 +166,7 @@ class _ConfigurationPageState extends State<ConfigurationPage> {
                         ],
                       ),
                     ],
-                    if (core.settings.getTrainerApp()?.star == true && !screenshotMode)
+                    if (core.settings.getTrainerApp()?.star == true && !screenshotMode && !widget.onboardingMode)
                       Row(
                         spacing: 8,
                         children: [
@@ -190,13 +194,13 @@ class _ConfigurationPageState extends State<ConfigurationPage> {
   Future<void> _setTarget(BuildContext context, Target target) async {
     await core.settings.setLastTarget(target);
 
-    if (core.settings.getTrainerApp()?.supportsOpenBikeProtocol == true && !core.logic.emulatorEnabled) {
+    if ((core.settings.getTrainerApp()?.supportsOpenBikeProtocol.isNotEmpty ?? false) && !core.logic.emulatorEnabled) {
       core.settings.setObpMdnsEnabled(true);
     }
 
     // enable local connection on Windows if the app doesn't support OBP
     if (target == Target.thisDevice &&
-        core.settings.getTrainerApp()?.supportsOpenBikeProtocol == false &&
+        core.settings.getTrainerApp()?.supportsOpenBikeProtocol.isEmpty == true &&
         !kIsWeb &&
         Platform.isWindows) {
       core.settings.setLocalEnabled(true);

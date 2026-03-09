@@ -1,9 +1,10 @@
 import 'dart:io';
 
+import 'package:bike_control/bluetooth/ble.dart';
 import 'package:bike_control/bluetooth/devices/openbikecontrol/openbikecontrol_device.dart';
 import 'package:bike_control/bluetooth/devices/openbikecontrol/protocol_parser.dart';
 import 'package:bike_control/bluetooth/devices/trainer_connection.dart';
-import 'package:bike_control/bluetooth/devices/zwift/protocol/zp.pbenum.dart';
+import 'package:bike_control/bluetooth/messages/notification.dart' show AlertNotification, LogNotification;
 import 'package:bike_control/utils/actions/base_actions.dart';
 import 'package:bike_control/utils/core.dart';
 import 'package:bike_control/utils/keymap/buttons.dart';
@@ -12,8 +13,7 @@ import 'package:bike_control/widgets/title.dart';
 import 'package:bluetooth_low_energy/bluetooth_low_energy.dart';
 import 'package:dartx/dartx.dart';
 import 'package:flutter/foundation.dart';
-
-import '../../messages/notification.dart' show AlertNotification;
+import 'package:prop/prop.dart';
 
 class OpenBikeControlBluetoothEmulator extends TrainerConnection {
   late final _peripheralManager = PeripheralManager();
@@ -79,6 +79,12 @@ class OpenBikeControlBluetoothEmulator extends TrainerConnection {
           print('Read request for characteristic: ${eventArgs.characteristic.uuid}');
 
           switch (eventArgs.characteristic.uuid.toString().toUpperCase()) {
+            case BleUuid.DEVICE_INFORMATION_CHARACTERISTIC_BATTERY_LEVEL:
+              await _peripheralManager.respondReadRequestWithValue(
+                eventArgs.request,
+                value: Uint8List.fromList([100]),
+              );
+              return;
             default:
               print('Unhandled read request for characteristic: ${eventArgs.characteristic.uuid}');
           }
@@ -98,27 +104,39 @@ class OpenBikeControlBluetoothEmulator extends TrainerConnection {
             'Notify state changed for characteristic: ${char.characteristic.uuid}: ${char.state}',
           );
         });
+
+        Uint8List? firstAppInfoMessage;
+
         _peripheralManager.characteristicWriteRequested.forEach((eventArgs) async {
           final characteristic = eventArgs.characteristic;
           final request = eventArgs.request;
           final value = request.value;
-          print(
-            'Write request for characteristic: ${characteristic.uuid}',
-          );
+          if (kDebugMode) {
+            print('Write request for characteristic: ${characteristic.uuid}: ${bytesToReadableHex(value)}');
+          }
 
           switch (eventArgs.characteristic.uuid.toString().toLowerCase()) {
             case OpenBikeControlConstants.APPINFO_CHARACTERISTIC_UUID:
               try {
-                final appInfo = OpenBikeProtocolParser.parseAppInfo(value);
+                // use this fallback if first message is incomplete (e.g. TrainingPeaks on macOS)
+
+                AppInfo appInfo = OpenBikeProtocolParser.parseAppInfo(
+                  Uint8List.fromList([...?firstAppInfoMessage, ...value]),
+                );
+                firstAppInfoMessage = null;
                 isConnected.value = true;
                 connectedApp.value = appInfo;
                 supportedActions = appInfo.supportedButtons.mapNotNull((b) => b.action).toList();
                 core.connection.signalNotification(
                   AlertNotification(LogLevel.LOGLEVEL_INFO, 'Connected to app: ${appInfo.appId}'),
                 );
-                print('Parsed App Info: $appInfo');
+                core.connection.signalNotification(LogNotification('Parsed App Info: $appInfo'));
               } catch (e) {
-                print('Error parsing App Info: $e');
+                core.connection.signalNotification(LogNotification('Error parsing App Info ${bytesToHex(value)}: $e'));
+                if (firstAppInfoMessage == null) {
+                  firstAppInfoMessage = value;
+                  return;
+                }
               }
               break;
             default:
@@ -222,6 +240,8 @@ class OpenBikeControlBluetoothEmulator extends TrainerConnection {
     if (kDebugMode) {
       print('Stopping OpenBikeControl BLE server...');
     }
+    await _peripheralManager.removeAllServices();
+    _isServiceAdded = false;
     await _peripheralManager.stopAdvertising();
     isStarted.value = false;
     isConnected.value = false;

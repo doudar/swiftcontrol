@@ -1,3 +1,74 @@
+### 5.0.0 (10-03-2026)
+
+BikeControl Pro is now available - subscribe to the Pro version to support the project and get access to additional features such as:
+- Cross Platform license: use the same subscription on all your devices (Windows, macOS, Android and iOS) without additional charge
+- Synchronize and backup your keymap settings across devices
+- Individual actions for single, long and double clicks, e.g. hold a button to steer, double click to perform a specific action. This means your two button devices can now have up to 6 different actions!
+- Windows, iOS, macOS: start any command/Shortcut, e.g. capture a screenshot, screen video, open a specific app, ... the possibilities are endless!
+- Windows, macOS: new screenshot action to capture a screenshot of the current screen and save it to your specified folder
+- Android: Open Assistant
+- and much more to come in the future!
+
+**Features**:
+- Bluetooth media buttons are now supported on iOS
+- Shimano Di2: long press and double clicks are now supported:
+  - perform steering using long presses
+  - gear changes are now reflected properly without losing any button presses
+- App is now available in Spanish
+
+**Fixes**:
+- macOS: Send keyboard key even if the trainer app isn't in foreground
+- You can now download BikeControl on Windows without the Microsoft Store
+
+### 4.7.0 (04-02-2026)
+
+**Features**:
+- new connection method: act as Bluetooth Keyboard:
+Your device can now act as Bluetooth keyboard, allowing you to send keyboard shortcuts (e.g. for virtual shifting) directly to your connected device. Especially useful for tablets / iPads.
+- added new keyboard shortcuts for Rouvy (Kudos, Pause workout)
+
+**Fixes**:
+- you can now finally buy the full version on Android :)
+- save "Enable Media Key detection" setting across app restarts
+- UI adjustments and fixes in the controller configuration screen
+- iOS: Remote pairing now works again
+
+### 4.6.0 (28-01-2026)
+
+**Features**:
+- Improve Zwift Click V2 connection and handling
+- Buttons in Configuration are now grouped by device
+
+### 4.5.0 (22-01-2026)
+
+**Features**:
+- Android: simulate additional actions for local connection method (Left, Down, Right, Up, Select, Back, Home, Recent Apps)
+  - control your phone with your controller
+  - control UI within the trainer app (if supported)
+- BikeControl now supports individual mapping when you use more than one Cycplus BC2 and ThinkRider VS200 controller
+- Windows & macOS: allow configuration of volume keys on Bluetooth HID devices
+
+### 4.4.0 (16-01-2026)
+
+**Features**:
+- Support for Thinkrider VS200
+
+**Fixes**:
+- Android: Local connection method allows passing keyboard events to the trainer app
+- macOS: Compatibility with macOS Tahoe
+- Windows: send keyboard events to the correct window when using multiple monitors or when another app is focused
+- Windows: fix media key detection
+
+### 4.3.0 (07-01-2026)
+
+**Features**:
+- Onboarding for new users
+- support controlling music & volume for Windows, macOS and Android
+- App is now available in Italian (thanks to Connect_Thanks2613)
+
+**Fixes**:
+- Vibration setting now available for Zwift Ride devices
+
 ### 4.2.0 (20-12-2025)
 
 BikeControl now offers a free trial period of 5 days for all features, so you can test everything before deciding to purchase a license. Please contact the support if you experience any issues!

@@ -1,7 +1,5 @@
 import 'dart:typed_data';
 
-import 'package:bike_control/bluetooth/devices/zwift/ftms_mdns_emulator.dart';
-import 'package:bike_control/bluetooth/messages/notification.dart';
 import 'package:bike_control/utils/actions/base_actions.dart';
 import 'package:bike_control/utils/keymap/buttons.dart';
 import 'package:bike_control/utils/keymap/keymap.dart';
@@ -38,7 +36,6 @@ class WahooKickrHeadwind extends BluetoothDevice {
   @override
   Future<void> processCharacteristic(String characteristic, Uint8List bytes) {
     // Analyze the received bytes to determine current state
-    actionStreamInternal.add(LogNotification('Received ${bytesToHex(bytes)} from Headwind $characteristic'));
     if (bytes.length >= 4 && bytes[0] == 0xFD && bytes[1] == 0x01) {
       final mode = bytes[3];
       final speed = bytes[2];
@@ -80,8 +77,12 @@ class WahooKickrHeadwind extends BluetoothDevice {
         service,
         characteristic,
         manualModeData,
+        withoutResponse: true,
       );
       _currentMode = HeadwindMode.manual;
+
+      // Small delay to ensure mode change is processed before speed command
+      await Future.delayed(const Duration(milliseconds: 100));
     }
 
     // Command format: [0x02, speed_value]
@@ -93,6 +94,7 @@ class WahooKickrHeadwind extends BluetoothDevice {
       service,
       characteristic,
       data,
+      withoutResponse: true,
     );
     _currentSpeed = speedPercent;
   }
@@ -109,6 +111,7 @@ class WahooKickrHeadwind extends BluetoothDevice {
       service,
       characteristic,
       data,
+      withoutResponse: true,
     );
     _currentMode = HeadwindMode.heartRate;
   }

@@ -36,6 +36,7 @@ class MethodChannelKeyPressSimulator extends KeyPressSimulatorPlatform {
     KeyboardKey? key,
     List<ModifierKey> modifiers = const [],
     bool keyDown = true,
+    String? targetApp,
   }) async {
     PhysicalKeyboardKey? physicalKey = key is PhysicalKeyboardKey ? key : null;
     if (key is LogicalKeyboardKey) {
@@ -48,6 +49,7 @@ class MethodChannelKeyPressSimulator extends KeyPressSimulatorPlatform {
       'keyCode': physicalKey?.keyCode,
       'modifiers': modifiers.map((e) => e.name).toList(),
       'keyDown': keyDown,
+      'targetAppName': targetApp,
     }..removeWhere((key, value) => value == null);
     await methodChannel.invokeMethod('simulateKeyPress', arguments);
   }
@@ -60,5 +62,28 @@ class MethodChannelKeyPressSimulator extends KeyPressSimulatorPlatform {
       'keyDown': keyDown,
     };
     await methodChannel.invokeMethod('simulateMouseClick', arguments);
+  }
+
+  @override
+  Future<void> simulateMediaKey(PhysicalKeyboardKey mediaKey) async {
+    // Map PhysicalKeyboardKey to string identifier since keyCode is null for media keys
+    final keyMap = {
+      PhysicalKeyboardKey.mediaPlayPause: 'playPause',
+      PhysicalKeyboardKey.mediaStop: 'stop',
+      PhysicalKeyboardKey.mediaTrackNext: 'next',
+      PhysicalKeyboardKey.mediaTrackPrevious: 'previous',
+      PhysicalKeyboardKey.audioVolumeUp: 'volumeUp',
+      PhysicalKeyboardKey.audioVolumeDown: 'volumeDown',
+    };
+
+    final keyIdentifier = keyMap[mediaKey];
+    if (keyIdentifier == null) {
+      throw UnsupportedError('Unsupported media key: $mediaKey');
+    }
+
+    final Map<String, Object?> arguments = {
+      'key': keyIdentifier,
+    };
+    await methodChannel.invokeMethod('simulateMediaKey', arguments);
   }
 }

@@ -2,6 +2,7 @@ package de.jonasbark.accessibility
 
 import AKeyEvent
 import Accessibility
+import GlobalAction
 import HidKeyPressedStreamHandler
 import MediaAction
 import PigeonEventSink
@@ -66,6 +67,10 @@ class AccessibilityPlugin: FlutterPlugin, Accessibility {
     Observable.toService?.performTouch(x = x, y = y, isKeyUp = isKeyUp, isKeyDown = isKeyDown) ?: error("Service not running")
   }
 
+  override fun performGlobalAction(action: GlobalAction) {
+    Observable.toService?.performGlobalAction(action) ?: error("Service not running")
+  }
+
   override fun controlMedia(action: MediaAction) {
     val audioService = context.getSystemService(Context.AUDIO_SERVICE) as android.media.AudioManager
     when (action) {
@@ -88,6 +93,11 @@ class AccessibilityPlugin: FlutterPlugin, Accessibility {
 
   override fun ignoreHidDevices() {
     Observable.ignoreHidDevices = true
+  }
+
+  override fun setHandledKeys(keys: List<String>) {
+    // Clear and update the concurrent set
+    Observable.handledKeys = keys.toSet()
   }
 
 }

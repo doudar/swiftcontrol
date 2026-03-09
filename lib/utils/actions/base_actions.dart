@@ -49,6 +49,8 @@ abstract class BaseActions {
 
   BaseActions({required this.supportedModes});
 
+  void cleanup();
+
   void init(SupportedApp? supportedApp) {
     this.supportedApp = supportedApp;
     debugPrint('Supported app: ${supportedApp?.name ?? "None"}');
@@ -105,25 +107,26 @@ abstract class BaseActions {
     return Offset.zero;
   }
 
-  Future<ActionResult> performAction(ControllerButton button, {required bool isKeyDown, required bool isKeyUp}) async {
+  Future<ActionResult> performAction(
+    ControllerButton button, {
+    required bool isKeyDown,
+    required bool isKeyUp,
+    ButtonTrigger trigger = ButtonTrigger.singleClick,
+  }) async {
     if (supportedApp == null) {
       return Error(
         AppLocalizations.current.couldNotPerformButtonnamesplitbyuppercaseNoKeymapSet(button.name.splitByUpperCase()),
       );
     }
 
-    final keyPair = supportedApp!.keymap.getKeyPair(button);
-
-    if (core.logic.hasNoConnectionMethod) {
-      if (GyroscopeSteeringButtons.values.contains(button)) {
-        return Ignored('Too many messages from gyroscope steering');
-      } else {
-        return Error(AppLocalizations.current.pleaseSelectAConnectionMethodFirst);
-      }
-    } else if (!(await core.logic.isTrainerConnected())) {
-      return Error(AppLocalizations.current.noConnectionMethodIsConnectedOrActive);
-    } else if (keyPair == null || keyPair.hasNoAction) {
+    final keyPair = supportedApp!.keymap.getKeyPair(button, trigger: trigger);
+    if (keyPair == null || keyPair.hasNoAction) {
       return Error(AppLocalizations.current.noActionAssignedForButton(button.name.splitByUpperCase()));
+    }
+
+    final guard = proGuard(button: button, trigger: trigger, keyPair: keyPair);
+    if (guard is! NotHandled) {
+      return guard;
     }
 
     // Handle Headwind actions
@@ -137,6 +140,16 @@ abstract class BaseActions {
       // Increment command count after successful execution
       await IAPManager.instance.incrementCommandCount();
       return await headwind.handleKeypair(keyPair, isKeyDown: isKeyDown);
+    }
+
+    if (core.logic.hasNoConnectionMethod) {
+      if (GyroscopeSteeringButtons.values.contains(button)) {
+        return Ignored('Too many messages from gyroscope steering');
+      } else {
+        return Error(AppLocalizations.current.pleaseSelectAConnectionMethodFirst);
+      }
+    } else if (!(await core.logic.isTrainerConnected())) {
+      return Error(AppLocalizations.current.noConnectionMethodIsConnectedOrActive);
     }
 
     final directConnectHandled = await _handleDirectConnect(keyPair, button, isKeyUp: isKeyUp, isKeyDown: isKeyDown);
@@ -171,16 +184,81 @@ abstract class BaseActions {
     }
     return NotHandled('');
   }
+
+  ActionResult proGuard({
+    required ControllerButton button,
+    required ButtonTrigger trigger,
+    required KeyPair keyPair,
+  }) {
+    if (keyPair.isProAction && !IAPManager.instance.hasActiveSubscription) {
+      return Error('Pro subscription required for action: $keyPair');
+    }
+
+    if (!IAPManager.instance.hasActiveSubscription && supportedApp != null) {
+      final activeTriggers = ButtonTrigger.values.where((candidate) {
+        final candidatePair = supportedApp!.keymap.getKeyPair(button, trigger: candidate);
+        return candidatePair != null && !candidatePair.hasNoAction;
+      }).toList();
+
+      if (activeTriggers.length > 1 && trigger != activeTriggers.first) {
+        return Error('Pro subscription required for additional trigger types');
+      }
+    }
+
+    return NotHandled('');
+  }
 }
 
 class StubActions extends BaseActions {
   StubActions({super.supportedModes = const []});
 
-  final List<(ControllerButton button, bool isDown, bool isUp)> performedActions = [];
+  final List<PerformedAction> performedActions = [];
 
   @override
-  Future<ActionResult> performAction(ControllerButton button, {bool isKeyDown = true, bool isKeyUp = false}) async {
-    performedActions.add((button, isKeyDown, isKeyUp));
+  Future<ActionResult> performAction(
+    ControllerButton button, {
+    bool isKeyDown = true,
+    bool isKeyUp = false,
+    ButtonTrigger trigger = ButtonTrigger.singleClick,
+  }) async {
+    performedActions.add(PerformedAction(button, isDown: isKeyDown, isUp: isKeyUp, trigger: trigger));
     return Future.value(Ignored('${button.name.splitByUpperCase()} clicked'));
+  }
+
+  @override
+  void cleanup() {
+    performedActions.clear();
+  }
+}
+
+class PerformedAction {
+  final ControllerButton button;
+  final bool isDown;
+  final bool isUp;
+  final ButtonTrigger trigger;
+
+  PerformedAction(
+    this.button, {
+    required this.isDown,
+    required this.isUp,
+    this.trigger = ButtonTrigger.singleClick,
+  });
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is PerformedAction &&
+          runtimeType == other.runtimeType &&
+          button.copyWith(sourceDeviceId: null) == other.button.copyWith(sourceDeviceId: null) &&
+          isDown == other.isDown &&
+          isUp == other.isUp &&
+          trigger == other.trigger;
+
+  @override
+  int get hashCode => Object.hash(button, isDown, isUp, trigger);
+
+  @override
+  String toString() {
+    return '{button: $button, isDown: $isDown, isUp: $isUp, trigger: $trigger}';
   }
 }

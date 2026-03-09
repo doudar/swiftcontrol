@@ -1,16 +1,23 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
 import 'package:bike_control/bluetooth/devices/gyroscope/gyroscope_steering.dart';
+import 'package:bike_control/services/settings_sync_service.dart';
 import 'package:bike_control/utils/core.dart';
 import 'package:bike_control/utils/iap/iap_manager.dart';
 import 'package:bike_control/utils/keymap/apps/supported_app.dart';
+import 'package:bike_control/utils/requirements/android.dart';
 import 'package:bike_control/utils/requirements/multi.dart';
+import 'package:bike_control/utils/windows_store_environment.dart';
 import 'package:dartx/dartx.dart';
+import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as path;
 import 'package:path_provider_windows/path_provider_windows.dart';
+import 'package:prop/emulators/prefs.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:shared_preferences_windows/shared_preferences_windows.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:window_manager/window_manager.dart';
 
 import '../../main.dart';
@@ -19,12 +26,28 @@ import '../keymap/apps/custom_app.dart';
 import '../keymap/buttons.dart';
 
 class Settings {
-  late final SharedPreferences prefs;
+  late SharedPreferences prefs;
+  SettingsSyncService? _syncService;
+  Timer? _syncDebounceTimer;
 
   Future<String?> init({bool retried = false}) async {
     try {
       prefs = await SharedPreferences.getInstance();
+      propPrefs.initialize(prefs);
+      if (!screenshotMode) {
+        try {
+          await NotificationRequirement.setup();
+        } catch (error, stack) {
+          recordError(error, stack, context: 'Notification setup');
+        }
+      }
       initializeActions(getLastTarget()?.connectionType ?? ConnectionType.unknown);
+
+      if (getShowOnboarding() && getTrainerApp() != null) {
+        // If onboarding is to be shown, but a trainer app is already set,
+        // skip onboarding and set to not show again.
+        await setShowOnboarding(false);
+      }
 
       if (core.actionHandler is DesktopActions) {
         // Must add this line.
@@ -34,6 +57,19 @@ class Settings {
       final app = getKeyMap();
       core.actionHandler.init(app);
 
+      try {
+        await Supabase.initialize(
+          url: 'https://pikrcyynovdvogrldfnw.supabase.co',
+          anonKey: const String.fromEnvironment('SUPABASE_ANON_KEY'),
+        );
+      } catch (e, s) {
+        recordError(e, s, context: 'Supabase initialization');
+      }
+
+      if (!kIsWeb && Platform.isWindows) {
+        await WindowsStoreEnvironment.initialize();
+      }
+
       // Initialize IAP manager
       await IAPManager.instance.initialize();
 
@@ -42,8 +78,18 @@ class Settings {
         await IAPManager.instance.startTrial();
       }
 
+      // Initialize settings sync service for Pro users
+      try {
+        _syncService = SettingsSyncService();
+        await _syncService!.initialize();
+      } catch (e) {
+        // Sync service is not critical, continue without it
+        print('Failed to initialize settings sync: $e');
+      }
+
       return null;
     } catch (e, s) {
+      recordError(e, s, context: 'Init');
       if (!retried) {
         if (Platform.isWindows) {
           // delete settings file
@@ -90,6 +136,7 @@ class Settings {
       await prefs.setStringList('customapp_${app.profileName}', app.encodeKeymap());
     }
     await prefs.setString('app', app.name);
+    _triggerAutoSync();
   }
 
   SupportedApp? getKeyMap() {
@@ -103,7 +150,13 @@ class Settings {
       final customApp = CustomApp(profileName: appName);
       final appSetting = prefs.getStringList('customapp_$appName');
       if (appSetting != null) {
-        customApp.decodeKeymap(appSetting);
+        try {
+          customApp.decodeKeymap(appSetting);
+        } catch (e, s) {
+          recordError(e, s, context: 'Decoding custom app keymap for $appName');
+          // reset it
+          prefs.remove('customapp_$appName');
+        }
       }
       return customApp;
     } else {
@@ -128,6 +181,7 @@ class Settings {
       core.actionHandler.init(null);
       await prefs.remove('app');
     }
+    _triggerAutoSync();
   }
 
   Future<void> duplicateCustomAppProfile(String sourceProfileName, String newProfileName) async {
@@ -135,6 +189,7 @@ class Settings {
     if (sourceData != null) {
       await prefs.setStringList('customapp_$newProfileName', sourceData);
     }
+    _triggerAutoSync();
   }
 
   String? exportCustomAppProfile(String profileName) {
@@ -161,6 +216,7 @@ class Settings {
       final keymap = (decoded['keymap'] as List).map((e) => jsonEncode(e)).toList().cast<String>();
 
       await prefs.setStringList('customapp_$profileName', keymap);
+      _triggerAutoSync();
       return true;
     } catch (e) {
       print(e);
@@ -181,6 +237,7 @@ class Settings {
   Future<void> setLastTarget(Target target) async {
     await prefs.setString('last_target', target.name);
     initializeActions(target.connectionType);
+    IAPManager.instance.setAttributes();
   }
 
   Future<void> setLastSeenVersion(String version) async {
@@ -260,6 +317,7 @@ class Settings {
       names.add(deviceName);
       await prefs.setStringList('ignored_device_ids', ids);
       await prefs.setStringList('ignored_device_names', names);
+      _triggerAutoSync();
     }
   }
 
@@ -273,6 +331,7 @@ class Settings {
       names.removeAt(index);
       await prefs.setStringList('ignored_device_ids', ids);
       await prefs.setStringList('ignored_device_names', names);
+      _triggerAutoSync();
     }
   }
 
@@ -301,6 +360,14 @@ class Settings {
 
   bool getRemoteControlEnabled() {
     return prefs.getBool('remote_control_enabled') ?? false;
+  }
+
+  void setRemoteKeyboardControlEnabled(bool value) {
+    prefs.setBool('remote_keyboard_control_enabled', value);
+  }
+
+  bool getRemoteKeyboardControlEnabled() {
+    return prefs.getBool('remote_keyboard_control_enabled') ?? false;
   }
 
   bool getLocalEnabled() {
@@ -373,5 +440,53 @@ class Settings {
   Future<void> setSramAxsDoubleClickWindowMs(int ms) async {
     final v = ms.clamp(_sramAxsDoubleClickWindowMinMs, _sramAxsDoubleClickWindowMaxMs);
     await prefs.setInt('sram_axs_double_click_window_ms', v);
+  }
+
+  bool getShowOnboarding() {
+    return !kIsWeb && (prefs.getBool('show_onboarding') ?? true);
+  }
+
+  Future<void> setShowOnboarding(bool show) async {
+    await prefs.setBool('show_onboarding', show);
+  }
+
+  bool hasAskedPermissions() {
+    return prefs.getBool('asked_permissions') ?? false;
+  }
+
+  Future<void> setHasAskedPermissions(bool asked) async {
+    await prefs.setBool('asked_permissions', asked);
+  }
+
+  bool getMediaKeyDetectionEnabled() {
+    return prefs.getBool('media_key_detection_enabled') ?? false;
+  }
+
+  Future<void> setMediaKeyDetectionEnabled(bool enabled) async {
+    await prefs.setBool('media_key_detection_enabled', enabled);
+    _triggerAutoSync();
+  }
+
+  /// Triggers automatic sync to server for Pro users.
+  /// Uses debouncing to avoid excessive sync calls.
+  void _triggerAutoSync() {
+    if (_syncService == null) return;
+    if (!IAPManager.instance.hasActiveSubscription) return;
+    if (!IAPManager.instance.isLoggedIn) return;
+
+    // Cancel existing timer
+    _syncDebounceTimer?.cancel();
+
+    // Set new timer to sync after 2 seconds of inactivity
+    _syncDebounceTimer = Timer(const Duration(seconds: 10), () {
+      _syncService?.syncToServer();
+    });
+  }
+
+  /// Disposes the sync service and cleans up resources.
+  void dispose() {
+    _syncDebounceTimer?.cancel();
+    _syncService?.dispose();
+    _syncService = null;
   }
 }

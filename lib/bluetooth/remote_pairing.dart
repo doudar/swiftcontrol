@@ -1,7 +1,6 @@
 import 'dart:io';
 
 import 'package:bike_control/bluetooth/devices/trainer_connection.dart';
-import 'package:bike_control/bluetooth/devices/zwift/protocol/zp.pb.dart';
 import 'package:bike_control/bluetooth/messages/notification.dart';
 import 'package:bike_control/gen/l10n.dart';
 import 'package:bike_control/utils/actions/base_actions.dart';
@@ -12,6 +11,7 @@ import 'package:bike_control/utils/requirements/multi.dart';
 import 'package:bluetooth_low_energy/bluetooth_low_energy.dart';
 import 'package:flutter/foundation.dart';
 import 'package:permission_handler/permission_handler.dart';
+import 'package:prop/prop.dart';
 
 import '../utils/keymap/keymap.dart';
 
@@ -159,37 +159,6 @@ class RemotePairing extends TrainerConnection {
         descriptors: [],
       );
 
-      // Input report characteristic (notify)
-      final keyboardInputReport = GATTCharacteristic.mutable(
-        uuid: UUID.fromString('2A4D'),
-        permissions: [GATTCharacteristicPermission.read],
-        properties: [GATTCharacteristicProperty.notify, GATTCharacteristicProperty.read],
-        descriptors: [
-          GATTDescriptor.immutable(
-            // Report Reference: ID=1, Type=Input(1)
-            uuid: UUID.fromString('2908'),
-            value: Uint8List.fromList([0x02, 0x01]),
-          ),
-        ],
-      );
-
-      final outputReport = GATTCharacteristic.mutable(
-        uuid: UUID.fromString('2A4D'),
-        permissions: [GATTCharacteristicPermission.read, GATTCharacteristicPermission.write],
-        properties: [
-          GATTCharacteristicProperty.read,
-          GATTCharacteristicProperty.write,
-          GATTCharacteristicProperty.writeWithoutResponse,
-        ],
-        descriptors: [
-          GATTDescriptor.immutable(
-            // Report Reference: ID=1, Type=Input(1)
-            uuid: UUID.fromString('2908'),
-            value: Uint8List.fromList([0x02, 0x02]),
-          ),
-        ],
-      );
-
       // 2) HID service
       final hidService = GATTService(
         uuid: UUID.fromString(Platform.isIOS ? '1812' : '00001812-0000-1000-8000-00805F9B34FB'),
@@ -198,9 +167,7 @@ class RemotePairing extends TrainerConnection {
           hidInfo,
           reportMap,
           protocolMode,
-          outputReport,
           hidControlPoint,
-          keyboardInputReport,
           inputReport,
         ],
         includedServices: [],
@@ -214,18 +181,21 @@ class RemotePairing extends TrainerConnection {
         });
 
         _peripheralManager.characteristicNotifyStateChanged.forEach((char) {
+          // Check if this is the input report characteristic (2A4D)
           if (char.characteristic.uuid == inputReport.uuid) {
             if (char.state) {
-              _inputReport = char.characteristic;
               _central = char.central;
+              _inputReport = char.characteristic;
+              isConnected.value = true;
+              print('Input report subscribed');
             } else {
               _inputReport = null;
               _central = null;
+              isConnected.value = false;
+              print('Input report unsubscribed');
             }
           }
-          print(
-            'Notify state changed for characteristic: ${char.characteristic.uuid} vs ${char.characteristic.uuid == inputReport.uuid}: ${char.state}',
-          );
+          print('Notify state changed for characteristic: ${char.characteristic.uuid}: ${char.state}');
         });
       }
       await _peripheralManager.addService(hidService);
@@ -257,13 +227,24 @@ class RemotePairing extends TrainerConnection {
               : ''}',
       serviceUUIDs: [UUID.fromString(Platform.isIOS ? '1812' : '00001812-0000-1000-8000-00805F9B34FB')],
     );
-    print('Starting advertising with Zwift service...');
+    print('Starting advertising with Remote service...');
 
-    await _peripheralManager.startAdvertising(advertisement);
+    try {
+      await _peripheralManager.startAdvertising(advertisement);
+    } catch (e) {
+      if (e.toString().contains("Advertising has already started")) {
+        print('Advertising already started, ignoring error');
+        return;
+      } else {
+        rethrow;
+      }
+    }
     _isLoading = false;
   }
 
   Future<void> stopAdvertising() async {
+    await _peripheralManager.removeAllServices();
+    _isServiceAdded = false;
     await _peripheralManager.stopAdvertising();
     isStarted.value = false;
     isConnected.value = false;

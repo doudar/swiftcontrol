@@ -1,4 +1,3 @@
-import 'package:bike_control/main.dart';
 import 'package:bike_control/utils/keymap/apps/supported_app.dart';
 import 'package:bike_control/utils/requirements/multi.dart';
 import 'package:dartx/dartx.dart';
@@ -11,10 +10,9 @@ class MyWhoosh extends SupportedApp {
   MyWhoosh()
     : super(
         name: 'MyWhoosh',
-        packageName: "com.mywhoosh.whooshgame",
+        packageName: "MyWhoosh",
         compatibleTargets: Target.values,
         supportsZwiftEmulation: false,
-        supportsOpenBikeProtocol: screenshotMode,
         star: true,
         keymap: Keymap(
           keyPairs: [

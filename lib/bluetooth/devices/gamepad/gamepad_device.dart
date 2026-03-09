@@ -1,18 +1,20 @@
 import 'dart:io';
 
-import 'package:dartx/dartx.dart';
-import 'package:flutter/material.dart';
-import 'package:gamepads/gamepads.dart';
 import 'package:bike_control/bluetooth/devices/base_device.dart';
 import 'package:bike_control/bluetooth/messages/notification.dart';
 import 'package:bike_control/pages/device.dart';
+import 'package:bike_control/utils/core.dart';
 import 'package:bike_control/utils/keymap/buttons.dart';
 import 'package:bike_control/widgets/ui/beta_pill.dart';
+import 'package:bike_control/widgets/ui/warning.dart';
+import 'package:dartx/dartx.dart';
+import 'package:gamepads/gamepads.dart';
+import 'package:shadcn_flutter/shadcn_flutter.dart';
 
 class GamepadDevice extends BaseDevice {
   final String id;
 
-  GamepadDevice(super.name, {required this.id}) : super(availableButtons: []);
+  GamepadDevice(super.name, {required this.id}) : super(availableButtons: [], uniqueId: id);
 
   List<ControllerButton> _lastButtonsClicked = [];
 
@@ -30,7 +32,7 @@ class GamepadDevice extends BaseDevice {
       final buttonKey = event.type == KeyType.analog ? '${event.key}_$normalizedValue' : event.key;
       ControllerButton button = getOrAddButton(
         buttonKey,
-        () => ControllerButton(buttonKey),
+        () => ControllerButton(buttonKey, sourceDeviceId: id),
       );
 
       switch (event.type) {
@@ -68,12 +70,20 @@ class GamepadDevice extends BaseDevice {
             spacing: 8,
             children: [
               Text(
-                name.screenshot,
+                toString().screenshot,
                 style: TextStyle(fontWeight: FontWeight.bold),
               ),
               if (isBeta) BetaPill(),
             ],
           ),
+          if (Platform.isAndroid && !core.settings.getLocalEnabled())
+            Warning(
+              children: [
+                Text(
+                  'For it to work properly, even when BikeControl is in the background, you need to enable the local connection method in the next tab.',
+                ).small,
+              ],
+            ),
         ],
       ),
     );

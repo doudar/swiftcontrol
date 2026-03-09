@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 
 class ZwiftConstants {
   static const ZWIFT_CUSTOM_SERVICE_UUID = "00000001-19CA-4651-86E5-FA29DCDD09D1";
+  static const ZWIFT_CUSTOM_SERVICE_SHORT_UUID = "0001";
   static const ZWIFT_RIDE_CUSTOM_SERVICE_UUID = "0000fc82-0000-1000-8000-00805f9b34fb";
   static const ZWIFT_RIDE_CUSTOM_SERVICE_UUID_SHORT = "fc82";
   static const ZWIFT_ASYNC_CHARACTERISTIC_UUID = "00000002-19CA-4651-86E5-FA29DCDD09D1";
@@ -59,13 +60,13 @@ class ZwiftButtons {
   // left controller
   static const ControllerButton navigationUp = ControllerButton(
     'navigationUp',
-    action: InGameAction.toggleUi,
+    action: InGameAction.up,
     icon: Icons.keyboard_arrow_up,
     color: Colors.black,
   );
   static const ControllerButton navigationDown = ControllerButton(
     'navigationDown',
-    action: InGameAction.uturn,
+    action: InGameAction.down,
     icon: Icons.keyboard_arrow_down,
     color: Colors.black,
   );
@@ -106,7 +107,7 @@ class ZwiftButtons {
     action: InGameAction.rideOnBomb,
     color: Colors.deepOrangeAccent,
   );
-  static const ControllerButton y = ControllerButton('y', action: null, color: Colors.lightBlue);
+  static const ControllerButton y = ControllerButton('y', action: InGameAction.menu, color: Colors.lightBlue);
   static const ControllerButton onOffRight = ControllerButton('onOffRight', action: InGameAction.toggleUi);
   static const ControllerButton sideButtonRight = ControllerButton('sideButtonRight', action: InGameAction.shiftUp);
   static const ControllerButton paddleRight = ControllerButton('paddleRight', action: InGameAction.shiftUp);

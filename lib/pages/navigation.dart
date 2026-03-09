@@ -1,5 +1,6 @@
-import 'dart:io';
+import 'dart:async';
 
+import 'package:bike_control/bluetooth/messages/notification.dart';
 import 'package:bike_control/gen/l10n.dart';
 import 'package:bike_control/main.dart';
 import 'package:bike_control/pages/customize.dart';
@@ -7,13 +8,12 @@ import 'package:bike_control/pages/device.dart';
 import 'package:bike_control/pages/trainer.dart';
 import 'package:bike_control/utils/core.dart';
 import 'package:bike_control/utils/i18n_extension.dart';
-import 'package:bike_control/utils/iap/iap_manager.dart';
 import 'package:bike_control/widgets/logviewer.dart';
 import 'package:bike_control/widgets/menu.dart';
 import 'package:bike_control/widgets/title.dart';
 import 'package:bike_control/widgets/ui/colors.dart';
+import 'package:bike_control/widgets/ui/help_button.dart';
 import 'package:dartx/dartx.dart';
-import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:shadcn_flutter/shadcn_flutter.dart';
@@ -48,7 +48,7 @@ class Navigation extends StatefulWidget {
   State<Navigation> createState() => _NavigationState();
 }
 
-class _NavigationState extends State<Navigation> with WidgetsBindingObserver {
+class _NavigationState extends State<Navigation> {
   bool _isMobile = false;
   late BCPage _selectedPage;
 
@@ -63,15 +63,15 @@ class _NavigationState extends State<Navigation> with WidgetsBindingObserver {
   void initState() {
     super.initState();
 
-    WidgetsBinding.instance.addObserver(this);
     _selectedPage = widget.page;
 
-    core.connection.initialize();
     core.logic.startEnabledConnectionMethod();
 
-    core.connection.actionStream.listen((_) {
+    _actionListener = core.connection.actionStream.listen((_) {
       _updateTrainerConnectionStatus();
-      setState(() {});
+      if (mounted) {
+        setState(() {});
+      }
     });
     _updateTrainerConnectionStatus();
 
@@ -87,8 +87,8 @@ class _NavigationState extends State<Navigation> with WidgetsBindingObserver {
 
   @override
   void dispose() {
+    _actionListener.cancel();
     super.dispose();
-    WidgetsBinding.instance.removeObserver(this);
   }
 
   @override
@@ -98,13 +98,6 @@ class _NavigationState extends State<Navigation> with WidgetsBindingObserver {
       setState(() {
         _selectedPage = widget.page;
       });
-    }
-  }
-
-  @override
-  void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.resumed) {
-      IAPManager.instance.restorePurchases();
     }
   }
 
@@ -145,31 +138,49 @@ class _NavigationState extends State<Navigation> with WidgetsBindingObserver {
 
   bool _isTrainerConnected = false;
 
+  late StreamSubscription<BaseNotification> _actionListener;
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       headers: [
-        AppBar(
-          padding:
-              const EdgeInsets.only(top: 12, bottom: 8, left: 12, right: 12) *
-              (screenshotMode ? 2 : Theme.of(context).scaling),
-          title: AppTitle(),
-          backgroundColor: Theme.of(context).colorScheme.background,
-          trailing: buildMenuButtons(
-            context,
-            _selectedPage,
-            _isMobile
-                ? () {
-                    setState(() {
-                      _selectedPage = BCPage.logs;
-                    });
-                  }
-                : null,
-          ),
+        Stack(
+          children: [
+            AppBar(
+              padding:
+                  const EdgeInsets.only(top: 12, bottom: 8, left: 12, right: 12) *
+                  (screenshotMode ? 2 : Theme.of(context).scaling),
+              title: AppTitle(),
+              backgroundColor: Theme.of(context).colorScheme.background,
+              trailing: buildMenuButtons(
+                context,
+                _selectedPage,
+                _isMobile
+                    ? () {
+                        setState(() {
+                          _selectedPage = BCPage.logs;
+                        });
+                      }
+                    : null,
+              ),
+            ),
+            if (!_isMobile)
+              Container(
+                alignment: Alignment.topCenter,
+                child: HelpButton(isMobile: false),
+              ),
+          ],
         ),
         Divider(),
       ],
-      footers: _isMobile ? [Divider(), _buildNavigationBar()] : [],
+      footers: _isMobile
+          ? [
+              if (_isMobile) Center(child: HelpButton(isMobile: true)),
+              Divider(),
+              _buildNavigationBar(),
+            ]
+          : [],
+      floatingFooter: true,
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -178,21 +189,23 @@ class _NavigationState extends State<Navigation> with WidgetsBindingObserver {
             VerticalDivider(),
           ],
           Expanded(
-            child: Container(
-              alignment: Alignment.topLeft,
-              child: AnimatedSwitcher(
-                duration: Duration(milliseconds: 200),
-                child: switch (_selectedPage) {
-                  BCPage.devices => DevicePage(
-                    key: _pageKeys[BCPage.devices],
+            child: AnimatedSwitcher(
+              duration: Duration(milliseconds: 200),
+              child: switch (_selectedPage) {
+                BCPage.devices => Align(
+                  alignment: Alignment.topLeft,
+                  child: DevicePage(
+                    isMobile: _isMobile,
                     onUpdate: () {
                       setState(() {
                         _selectedPage = BCPage.trainer;
                       });
                     },
                   ),
-                  BCPage.trainer => TrainerPage(
-                    key: _pageKeys[BCPage.trainer],
+                ),
+                BCPage.trainer => Align(
+                  alignment: Alignment.topLeft,
+                  child: TrainerPage(
                     onUpdate: () {
                       setState(() {});
                     },
@@ -201,15 +214,20 @@ class _NavigationState extends State<Navigation> with WidgetsBindingObserver {
                         _selectedPage = BCPage.customization;
                       });
                     },
+                    isMobile: _isMobile,
                   ),
-                  BCPage.customization => CustomizePage(
-                    key: _pageKeys[BCPage.customization],
-                  ),
-                  BCPage.logs => LogViewer(
+                ),
+                BCPage.customization => Align(
+                  alignment: Alignment.topLeft,
+                  child: CustomizePage(isMobile: _isMobile),
+                ),
+                BCPage.logs => Padding(
+                  padding: EdgeInsets.only(bottom: _isMobile ? 146 : 16, left: 16, right: 16, top: 16),
+                  child: LogViewer(
                     key: _pageKeys[BCPage.logs],
                   ),
-                },
-              ),
+                ),
+              },
             ),
           ),
         ],
@@ -218,42 +236,24 @@ class _NavigationState extends State<Navigation> with WidgetsBindingObserver {
   }
 
   Widget _buildNavigationMenu() {
-    return Column(
-      children: [
-        Expanded(
-          child: NavigationSidebar(
-            backgroundColor: Theme.of(context).brightness == Brightness.light
-                ? BKColor.backgroundLight
-                : Theme.of(context).colorScheme.card,
-            onSelected: (int index) {
-              setState(() {
-                _selectedPage = BCPage.values[index];
-              });
-            },
-            spacing: 4,
-            children: _tabs.map((page) => _buildNavigationItemDesktop(page)).toList(),
-          ),
-        ),
-
-        NavigationSidebar(
-          backgroundColor: Theme.of(context).brightness == Brightness.light
-              ? BKColor.backgroundLight
-              : Theme.of(context).colorScheme.card,
-          onSelected: (int index) {
-            setState(() {
-              _selectedPage = BCPage.logs;
-            });
-          },
-          children: [
-            NavigationDivider(),
-            NavigationItem(
-              label: Text(BCPage.logs.getTitle(context)),
-              selected: _selectedPage == BCPage.logs,
-              child: _buildIcon(BCPage.logs),
-            ),
-          ],
+    return NavigationSidebar(
+      backgroundColor: Theme.of(context).brightness == Brightness.light
+          ? BKColor.backgroundLight
+          : Theme.of(context).colorScheme.card,
+      onSelected: (Key? key) {
+        setState(() {
+          _selectedPage = _pageKeys.entries.firstWhere((entry) => entry.value == key).key;
+        });
+      },
+      spacing: 4,
+      selectedKey: _pageKeys[_selectedPage],
+      footer: [
+        SliverPadding(
+          padding: const EdgeInsets.all(8.0),
+          sliver: _buildNavigationItemDesktop(BCPage.logs),
         ),
       ],
+      children: _tabs.map((page) => _buildNavigationItemDesktop(page)).toList(),
     );
   }
 
@@ -300,17 +300,19 @@ class _NavigationState extends State<Navigation> with WidgetsBindingObserver {
 
   Widget _buildNavigationBar() {
     return NavigationBar(
-      padding:
-          EdgeInsets.only(top: 6, left: 12, right: 12, bottom: !kIsWeb && Platform.isMacOS ? 8 : 0) *
-          Theme.of(context).scaling,
+      padding: EdgeInsets.only(top: 6, left: 12, right: 12, bottom: 12) * Theme.of(context).scaling,
       labelType: NavigationLabelType.all,
-      onSelected: (int index) {
+      alignment: NavigationBarAlignment.spaceAround,
+      spacing: 8,
+      selectedKey: _pageKeys[_selectedPage],
+      onSelected: (Key? key) {
         setState(() {
-          _selectedPage = _tabs[index];
+          _selectedPage = _pageKeys.entries.firstWhere((entry) => entry.value == key).key;
         });
       },
       children: _tabs.map((page) {
         return NavigationItem(
+          key: _pageKeys[page],
           selected: _selectedPage == page,
           selectedStyle: ButtonStyle.primary(density: ButtonDensity.dense).copyWith(
             decoration: (context, states, value) {
@@ -335,16 +337,19 @@ class _NavigationState extends State<Navigation> with WidgetsBindingObserver {
             },
           ),
           enabled: _isPageEnabled(page),
-          label: Text(
-            page == BCPage.trainer && !screenshotMode
-                ? core.settings.getTrainerApp()?.name.split(' ').first ?? page.getTitle(context)
-                : page.getTitle(context),
-            style: TextStyle(
-              color: !_isPageEnabled(page)
-                  ? null
-                  : Theme.of(context).colorScheme.brightness == Brightness.dark
-                  ? Colors.white
-                  : null,
+          label: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 8.0),
+            child: Text(
+              page == BCPage.trainer && !screenshotMode
+                  ? core.settings.getTrainerApp()?.name.split(' ').first ?? page.getTitle(context)
+                  : page.getTitle(context),
+              style: TextStyle(
+                color: !_isPageEnabled(page)
+                    ? null
+                    : Theme.of(context).colorScheme.brightness == Brightness.dark
+                    ? Colors.white
+                    : null,
+              ),
             ),
           ),
           child: _buildIcon(page),
@@ -369,8 +374,9 @@ class _NavigationState extends State<Navigation> with WidgetsBindingObserver {
     };
   }
 
-  NavigationBarItem _buildNavigationItemDesktop(BCPage page) {
+  NavigationItem _buildNavigationItemDesktop(BCPage page) {
     return NavigationItem(
+      key: _pageKeys[page],
       selected: _selectedPage == page,
       selectedStyle: ButtonStyle.primary(density: ButtonDensity.dense).copyWith(
         decoration: (context, states, value) {

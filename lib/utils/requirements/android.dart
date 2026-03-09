@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 import 'dart:isolate';
 import 'dart:ui';
@@ -7,17 +8,21 @@ import 'package:bike_control/utils/actions/android.dart';
 import 'package:bike_control/utils/core.dart';
 import 'package:bike_control/utils/requirements/platform.dart';
 import 'package:bike_control/widgets/accessibility_disclosure_dialog.dart';
+import 'package:bike_control/widgets/ui/toast.dart';
+import 'package:bluetooth_low_energy/bluetooth_low_energy.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:shadcn_flutter/shadcn_flutter.dart';
 import 'package:universal_ble/universal_ble.dart';
+import 'package:url_launcher/url_launcher_string.dart';
 
 class AccessibilityRequirement extends PlatformRequirement {
   AccessibilityRequirement()
     : super(
         AppLocalizations.current.allowAccessibilityService,
         description: AppLocalizations.current.accessibilityDescription,
+        icon: Icons.accessibility_new,
       );
 
   @override
@@ -58,7 +63,7 @@ class AccessibilityRequirement extends PlatformRequirement {
 }
 
 class BluetoothScanRequirement extends PlatformRequirement {
-  BluetoothScanRequirement() : super(AppLocalizations.current.allowBluetoothScan);
+  BluetoothScanRequirement() : super(AppLocalizations.current.allowBluetoothScan, icon: Icons.bluetooth_searching);
 
   @override
   Future<void> call(BuildContext context, VoidCallback onUpdate) async {
@@ -75,7 +80,7 @@ class BluetoothScanRequirement extends PlatformRequirement {
 }
 
 class LocationRequirement extends PlatformRequirement {
-  LocationRequirement() : super(AppLocalizations.current.allowLocationForBluetooth);
+  LocationRequirement() : super(AppLocalizations.current.allowLocationForBluetooth, icon: Icons.location_on);
 
   @override
   Future<void> call(BuildContext context, VoidCallback onUpdate) async {
@@ -92,7 +97,8 @@ class LocationRequirement extends PlatformRequirement {
 }
 
 class BluetoothConnectRequirement extends PlatformRequirement {
-  BluetoothConnectRequirement() : super(AppLocalizations.current.allowBluetoothConnections);
+  BluetoothConnectRequirement()
+    : super(AppLocalizations.current.allowBluetoothConnections, icon: Icons.bluetooth_connected);
 
   @override
   Future<void> call(BuildContext context, VoidCallback onUpdate) async {
@@ -108,34 +114,57 @@ class BluetoothConnectRequirement extends PlatformRequirement {
   }
 }
 
+ReceivePort? _receivePort;
+StreamSubscription? _sub;
+
 class NotificationRequirement extends PlatformRequirement {
   NotificationRequirement()
     : super(
         AppLocalizations.current.allowPersistentNotification,
         description: AppLocalizations.current.notificationDescription,
+        icon: Icons.notifications_active,
       );
   @override
   Future<void> call(BuildContext context, VoidCallback onUpdate) async {
     if (Platform.isAndroid) {
-      await core.flutterLocalNotificationsPlugin
+      final result = await core.flutterLocalNotificationsPlugin
           .resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>()
           ?.requestNotificationsPermission();
+      if (result == false) {
+        buildToast(
+          title: 'Enable notifications for BikeControl in Android Settings',
+        );
+      }
     } else if (Platform.isIOS) {
-      await core.flutterLocalNotificationsPlugin
+      final result = await core.flutterLocalNotificationsPlugin
           .resolvePlatformSpecificImplementation<IOSFlutterLocalNotificationsPlugin>()
           ?.requestPermissions(
             alert: true,
             badge: false,
             sound: false,
           );
+      core.settings.setHasAskedPermissions(true);
+      if (result == false) {
+        buildToast(
+          title: 'Enable notifications for BikeControl in System Preferences → Notifications → Bike Control',
+        );
+        launchUrlString('x-apple.systempreferences:com.apple.preference.notifications');
+      }
     } else if (Platform.isMacOS) {
-      await core.flutterLocalNotificationsPlugin
+      final result = await core.flutterLocalNotificationsPlugin
           .resolvePlatformSpecificImplementation<MacOSFlutterLocalNotificationsPlugin>()
           ?.requestPermissions(
             alert: true,
             badge: false,
             sound: false,
           );
+      core.settings.setHasAskedPermissions(true);
+      if (result == false) {
+        buildToast(
+          title: 'Enable notifications for BikeControl in System Preferences → Notifications → Bike Control',
+        );
+        launchUrlString('x-apple.systempreferences:com.apple.preference.notifications');
+      }
     }
     await getStatus();
     return;
@@ -154,34 +183,37 @@ class NotificationRequirement extends PlatformRequirement {
       final permissions = await core.flutterLocalNotificationsPlugin
           .resolvePlatformSpecificImplementation<IOSFlutterLocalNotificationsPlugin>()
           ?.checkPermissions();
-      status = permissions?.isEnabled == true;
+      status = permissions?.isEnabled == true || core.settings.hasAskedPermissions();
     } else if (Platform.isMacOS) {
       final permissions = await core.flutterLocalNotificationsPlugin
           .resolvePlatformSpecificImplementation<MacOSFlutterLocalNotificationsPlugin>()
           ?.checkPermissions();
-      status = permissions?.isEnabled == true;
+      status = permissions?.isEnabled == true || core.settings.hasAskedPermissions();
     } else {
       status = true;
-    }
-    if (status) {
-      await setup();
     }
     return status;
   }
 
   static Future<void> setup() async {
-    const AndroidInitializationSettings initializationSettingsAndroid = AndroidInitializationSettings(
-      '@mipmap/ic_launcher',
-    );
-
+    print('NOTIFICATION SETUP');
     await core.flutterLocalNotificationsPlugin.initialize(
       InitializationSettings(
-        android: initializationSettingsAndroid,
+        android: AndroidInitializationSettings(
+          '@drawable/ic_notification',
+        ),
         iOS: DarwinInitializationSettings(
           requestAlertPermission: false,
+          requestBadgePermission: false,
+          requestSoundPermission: false,
         ),
         macOS: DarwinInitializationSettings(
           requestAlertPermission: false,
+        ),
+        windows: WindowsInitializationSettings(
+          appName: 'BikeControl',
+          appUserModelId: 'OpenBikeControl.BikeControl',
+          guid: UUID.short(0x12).toString(),
         ),
       ),
       onDidReceiveBackgroundNotificationResponse: notificationTapBackground,
@@ -238,15 +270,23 @@ class NotificationRequirement extends PlatformRequirement {
       ),
     );
 
-    final receivePort = ReceivePort();
-    IsolateNameServer.registerPortWithName(receivePort.sendPort, '_backgroundChannelKey');
-    final backgroundMessagePort = receivePort.asBroadcastStream();
-    backgroundMessagePort.listen((message) {
+    _receivePort = ReceivePort();
+    // If already registered, remove and re-register
+    IsolateNameServer.removePortNameMapping('_backgroundChannelKey');
+    final ok = IsolateNameServer.registerPortWithName(_receivePort!.sendPort, '_backgroundChannelKey');
+    if (!ok) {
+      // If this happens, something else re-registered immediately or you’re in a weird state.
+      throw StateError('Failed to register port name');
+    }
+    final backgroundMessagePort = _receivePort!.asBroadcastStream();
+    _sub = backgroundMessagePort.listen((message) {
+      print('Background isolate received message: $message');
       if (message == 'disconnect' || message == 'close') {
         UniversalBle.onAvailabilityChange = null;
         core.connection.disconnectAll();
       }
       if (message == 'close') {
+        core.actionHandler.cleanup();
         core.connection.stop();
         SystemNavigator.pop();
         AndroidFlutterLocalNotificationsPlugin().stopForegroundService();

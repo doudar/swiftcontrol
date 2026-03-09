@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:bike_control/bluetooth/ble.dart';
 import 'package:bike_control/bluetooth/devices/base_device.dart';
 import 'package:bike_control/bluetooth/devices/openbikecontrol/openbikecontrol_device.dart';
+import 'package:bike_control/bluetooth/devices/proxy/proxy_device.dart';
 import 'package:bike_control/bluetooth/devices/shimano/shimano_di2.dart';
 import 'package:bike_control/bluetooth/devices/sram/sram_axs.dart';
 import 'package:bike_control/bluetooth/devices/wahoo/wahoo_kickr_bike_pro.dart';
@@ -17,10 +18,15 @@ import 'package:bike_control/bluetooth/devices/zwift/zwift_ride.dart';
 import 'package:bike_control/pages/device.dart';
 import 'package:bike_control/utils/core.dart';
 import 'package:bike_control/utils/i18n_extension.dart';
+import 'package:bike_control/utils/iap/iap_manager.dart';
+import 'package:bike_control/utils/keymap/buttons.dart';
+import 'package:bike_control/widgets/device_script_drawer.dart';
 import 'package:bike_control/widgets/ui/beta_pill.dart';
 import 'package:bike_control/widgets/ui/device_info.dart';
 import 'package:bike_control/widgets/ui/loading_widget.dart';
+import 'package:bike_control/widgets/ui/pro_badge.dart';
 import 'package:bike_control/widgets/ui/small_progress_indicator.dart';
+import 'package:bike_control/widgets/ui/toast.dart';
 import 'package:dartx/dartx.dart';
 import 'package:flutter/foundation.dart';
 import 'package:shadcn_flutter/shadcn_flutter.dart';
@@ -29,12 +35,28 @@ import 'package:universal_ble/universal_ble.dart';
 import 'cycplus/cycplus_bc2.dart';
 import 'elite/elite_square.dart';
 import 'elite/elite_sterzo.dart';
+import 'thinkrider/thinkrider_vs200.dart';
 
 abstract class BluetoothDevice extends BaseDevice {
   final BleDevice scanResult;
 
-  BluetoothDevice(this.scanResult, {required super.availableButtons, super.isBeta = false})
-    : super(scanResult.name ?? 'Unknown Device') {
+  BluetoothDevice(
+    this.scanResult, {
+    required List<ControllerButton> availableButtons,
+    bool allowMultiple = false,
+    bool isBeta = false,
+    bool supportsLongPress = true,
+    String? buttonPrefix,
+  }) : super(
+         scanResult.name,
+         uniqueId: scanResult.deviceId,
+         availableButtons: allowMultiple
+             ? availableButtons.toList().map((b) => b.copyWith(sourceDeviceId: scanResult.deviceId)).toList()
+             : availableButtons.toList(),
+         isBeta: isBeta,
+         supportsLongPress: supportsLongPress,
+         buttonPrefix: buttonPrefix,
+       ) {
     rssi = scanResult.rssi;
   }
 
@@ -44,6 +66,7 @@ abstract class BluetoothDevice extends BaseDevice {
 
   static List<String> servicesToScan = [
     ZwiftConstants.ZWIFT_CUSTOM_SERVICE_UUID,
+    ZwiftConstants.ZWIFT_CUSTOM_SERVICE_SHORT_UUID,
     ZwiftConstants.ZWIFT_RIDE_CUSTOM_SERVICE_UUID,
     SquareConstants.SERVICE_UUID,
     WahooKickrBikeShiftConstants.SERVICE_UUID,
@@ -53,15 +76,26 @@ abstract class BluetoothDevice extends BaseDevice {
     ShimanoDi2Constants.SERVICE_UUID,
     ShimanoDi2Constants.SERVICE_UUID_ALTERNATIVE,
     OpenBikeControlConstants.SERVICE_UUID,
+    ThinkRiderVs200Constants.SERVICE_UUID,
   ];
 
+  static final List<String> _ignoredNames = ['ASSIOMA', 'QUARQ', 'POWERCRANK'];
+
+  List<BleService>? services;
+
   static BluetoothDevice? fromScanResult(BleDevice scanResult) {
+    // skip devices with ignored names
+    if (scanResult.name != null &&
+        _ignoredNames.any((ignoredName) => scanResult.name!.toUpperCase().startsWith(ignoredName))) {
+      return null;
+    }
+
     // Use the name first as the "System Devices" and Web (android sometimes Windows) don't have manufacturer data
     BluetoothDevice? device;
     if (kIsWeb) {
       device = switch (scanResult.name) {
         'Zwift Ride' => ZwiftRide(scanResult),
-        'Zwift Play' => ZwiftPlay(scanResult),
+        'Zwift Play' => ZwiftPlay(scanResult, deviceType: ZwiftDeviceType.playLeft),
         'Zwift Click' => ZwiftClickV2(scanResult),
         'SQUARE' => EliteSquare(scanResult),
         'OpenBike' => OpenBikeControlDevice(scanResult),
@@ -72,6 +106,7 @@ abstract class BluetoothDevice extends BaseDevice {
         _ when scanResult.name!.toUpperCase().startsWith('KICKR BIKE PRO') => WahooKickrBikePro(scanResult),
         _ when scanResult.name!.toUpperCase().startsWith('CYCPLUS') && scanResult.name!.toUpperCase().contains('BC2') =>
           CycplusBc2(scanResult),
+        _ when scanResult.name!.toUpperCase().startsWith('THINK VS') => ThinkRiderVs200(scanResult),
         _ when scanResult.name!.toUpperCase().startsWith('RDR') => ShimanoDi2(scanResult),
         _ when scanResult.name!.toUpperCase().startsWith('SRAM') => SramAxs(scanResult),
         _ => null,
@@ -81,7 +116,7 @@ abstract class BluetoothDevice extends BaseDevice {
         null => null,
         //'Zwift Ride' => ZwiftRide(scanResult), special case for Zwift Ride: we must only connect to the left controller
         // https://www.makinolo.com/blog/2024/07/26/zwift-ride-protocol/
-        'Zwift Play' => ZwiftPlay(scanResult),
+        //'Zwift Play' => ZwiftPlay(scanResult),
         //'Zwift Click' => ZwiftClick(scanResult), special case for Zwift Click v2: we must only connect to the left controller
         _ when scanResult.name!.toUpperCase().startsWith('HEADWIND') => WahooKickrHeadwind(scanResult),
         _ when scanResult.name!.toUpperCase().startsWith('SQUARE') => EliteSquare(scanResult),
@@ -90,11 +125,13 @@ abstract class BluetoothDevice extends BaseDevice {
         _ when scanResult.name!.toUpperCase().startsWith('KICKR BIKE PRO') => WahooKickrBikePro(scanResult),
         _ when scanResult.name!.toUpperCase().startsWith('CYCPLUS') && scanResult.name!.toUpperCase().contains('BC2') =>
           CycplusBc2(scanResult),
-        _ when scanResult.services.contains(CycplusBc2Constants.SERVICE_UUID.toLowerCase()) => CycplusBc2(scanResult),
+        _ when scanResult.name!.toUpperCase().startsWith('THINK VS') => ThinkRiderVs200(scanResult),
+        //_ when scanResult.services.contains(CycplusBc2Constants.SERVICE_UUID.toLowerCase()) => CycplusBc2(scanResult),
         _ when scanResult.services.contains(ShimanoDi2Constants.SERVICE_UUID.toLowerCase()) => ShimanoDi2(scanResult),
         _ when scanResult.services.contains(ShimanoDi2Constants.SERVICE_UUID_ALTERNATIVE.toLowerCase()) => ShimanoDi2(
           scanResult,
         ),
+        _ when scanResult.services.containsAny(ProxyDevice.proxyServiceUUIDs) && kDebugMode => ProxyDevice(scanResult),
         _ when scanResult.services.contains(SramAxsConstants.SERVICE_UUID.toLowerCase()) => SramAxs(
           scanResult,
         ),
@@ -111,6 +148,7 @@ abstract class BluetoothDevice extends BaseDevice {
       return device;
     } else if (scanResult.services.containsAny([
       ZwiftConstants.ZWIFT_CUSTOM_SERVICE_UUID.toLowerCase(),
+      ZwiftConstants.ZWIFT_CUSTOM_SERVICE_SHORT_UUID.toLowerCase(),
       ZwiftConstants.ZWIFT_RIDE_CUSTOM_SERVICE_UUID.toLowerCase(),
     ])) {
       // otherwise use the manufacturer data to identify the device
@@ -120,28 +158,31 @@ abstract class BluetoothDevice extends BaseDevice {
           ?.payload;
 
       if (data == null || data.isEmpty) {
-        return null;
+      } else {
+        final type = ZwiftDeviceType.fromManufacturerData(data.first);
+        device = switch (type) {
+          ZwiftDeviceType.click => ZwiftClick(scanResult),
+          ZwiftDeviceType.playRight => ZwiftPlay(scanResult, deviceType: type!),
+          ZwiftDeviceType.playLeft => ZwiftPlay(scanResult, deviceType: type!),
+          ZwiftDeviceType.rideLeft => ZwiftRide(scanResult),
+          //DeviceType.rideRight => ZwiftRide(scanResult), // see comment above
+          ZwiftDeviceType.clickV2Left => ZwiftClickV2(scanResult),
+          //DeviceType.clickV2Right => ZwiftClickV2(scanResult), // see comment above
+          _ => null,
+        };
       }
-
-      final type = ZwiftDeviceType.fromManufacturerData(data.first);
-      return switch (type) {
-        ZwiftDeviceType.click => ZwiftClick(scanResult),
-        ZwiftDeviceType.playRight => ZwiftPlay(scanResult),
-        ZwiftDeviceType.playLeft => ZwiftPlay(scanResult),
-        ZwiftDeviceType.rideLeft => ZwiftRide(scanResult),
-        //DeviceType.rideRight => ZwiftRide(scanResult), // see comment above
-        ZwiftDeviceType.clickV2Left => ZwiftClickV2(scanResult),
-        //DeviceType.clickV2Right => ZwiftClickV2(scanResult), // see comment above
-        _
-            when scanResult.name == 'Zwift Ride' &&
-                type != ZwiftDeviceType.rideRight &&
-                type != ZwiftDeviceType.rideLeft =>
-          ZwiftRide(scanResult), // e.g. old firmware
-        _ => null,
-      };
-    } else {
-      return null;
     }
+
+    if (scanResult.name == 'Zwift Ride' &&
+        device == null &&
+        core.connection.controllerDevices.none((d) => d is ZwiftRide)) {
+      // Fallback for Zwift Ride if nothing else matched => old firmware
+      buildToast(
+        title: 'You may need to update your Zwift Ride firmware.',
+        duration: Duration(seconds: 6),
+      );
+    }
+    return device;
   }
 
   @override
@@ -151,11 +192,6 @@ abstract class BluetoothDevice extends BaseDevice {
 
   @override
   int get hashCode => scanResult.deviceId.hashCode;
-
-  @override
-  String toString() {
-    return name + (firmwareVersion != null ? ' v$firmwareVersion' : '');
-  }
 
   BleDevice get device => scanResult;
 
@@ -172,8 +208,9 @@ abstract class BluetoothDevice extends BaseDevice {
       await UniversalBle.requestMtu(device.deviceId, 517);
     }
 
-    final services = await UniversalBle.discoverServices(device.deviceId);
-    final deviceInformationService = services.firstOrNullWhere(
+    services = await UniversalBle.discoverServices(device.deviceId);
+
+    final deviceInformationService = services!.firstOrNullWhere(
       (service) => service.uuid == BleUuid.DEVICE_INFORMATION_SERVICE_UUID.toLowerCase(),
     );
     final firmwareCharacteristic = deviceInformationService?.characteristics.firstOrNullWhere(
@@ -190,7 +227,7 @@ abstract class BluetoothDevice extends BaseDevice {
       core.connection.signalChange(this);
     }
 
-    final batteryService = services.firstOrNullWhere(
+    final batteryService = services!.firstOrNullWhere(
       (service) => service.uuid == BleUuid.DEVICE_BATTERY_SERVICE_UUID.toLowerCase(),
     );
 
@@ -209,7 +246,7 @@ abstract class BluetoothDevice extends BaseDevice {
       }
     }
 
-    await handleServices(services);
+    await handleServices(services!);
   }
 
   Future<void> handleServices(List<BleService> services);
@@ -217,8 +254,15 @@ abstract class BluetoothDevice extends BaseDevice {
 
   @override
   Future<void> disconnect() async {
+    services?.clear();
     await UniversalBle.disconnect(device.deviceId);
     super.disconnect();
+  }
+
+  String? serviceUuidForCharacteristic(String characteristicUuid) {
+    return services
+        ?.firstOrNullWhere((service) => service.characteristics.any((c) => c.uuid == characteristicUuid.toLowerCase()))
+        ?.uuid;
   }
 
   @override
@@ -230,7 +274,7 @@ abstract class BluetoothDevice extends BaseDevice {
           spacing: 8,
           children: [
             Text(
-              device.name?.screenshot ?? runtimeType.toString(),
+              toString().screenshot ?? runtimeType.toString(),
               style: TextStyle(fontWeight: FontWeight.bold),
             ),
             if (isBeta) BetaPill(),
@@ -239,7 +283,7 @@ abstract class BluetoothDevice extends BaseDevice {
               builder: (context) {
                 return LoadingWidget(
                   futureCallback: () async {
-                    final completer = showDropdown<bool>(
+                    final completer = showDropdown<bool?>(
                       context: context,
                       builder: (c) => DropdownMenu(
                         children: [
@@ -254,6 +298,31 @@ abstract class BluetoothDevice extends BaseDevice {
                             onPressed: (context) {
                               closeOverlay(context, true);
                             },
+                          ),
+                          MenuDivider(),
+                          MenuLabel(child: Text('Experimental')),
+                          MenuButton(
+                            trailing:
+                                !IAPManager.instance.isPurchased.value && !IAPManager.instance.hasActiveSubscription
+                                ? ProBadge()
+                                : null,
+                            onPressed: (overlayContext) async {
+                              await closeOverlay(context, null);
+                              if (!IAPManager.instance.isPurchased.value &&
+                                  !IAPManager.instance.hasActiveSubscription) {
+                                buildToast(
+                                  title: 'This feature is Full Version or Pro only.',
+                                  duration: Duration(seconds: 4),
+                                );
+                                return;
+                              }
+                              openDrawer(
+                                context: context,
+                                position: OverlayPosition.end,
+                                builder: (c) => DeviceScriptDrawer(deviceType: runtimeType.toString()),
+                              );
+                            },
+                            child: Text('Run Script'),
                           ),
                         ],
                       ),
@@ -316,15 +385,22 @@ abstract class BluetoothDevice extends BaseDevice {
               ),
 
             if (rssi != null)
-              DeviceInfo(
-                title: context.i18n.signal,
-                icon: switch (rssi!) {
-                  >= -50 => Icons.signal_cellular_4_bar,
-                  >= -60 => Icons.signal_cellular_alt_2_bar,
-                  >= -70 => Icons.signal_cellular_alt_1_bar,
-                  _ => Icons.signal_cellular_alt,
+              StreamBuilder(
+                stream: core.connection.rssiConnectionStream
+                    .where((device) => device == this)
+                    .map((event) => event.rssi),
+                builder: (context, rssiValue) {
+                  return DeviceInfo(
+                    title: context.i18n.signal,
+                    icon: switch (rssiValue.data ?? rssi!) {
+                      >= -50 => Icons.signal_cellular_4_bar,
+                      >= -60 => Icons.signal_cellular_alt_2_bar,
+                      >= -70 => Icons.signal_cellular_alt_1_bar,
+                      _ => Icons.signal_cellular_alt,
+                    },
+                    value: '$rssi dBm',
+                  );
                 },
-                value: '$rssi dBm',
               ),
           ],
         ),

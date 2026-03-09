@@ -1,17 +1,20 @@
 #include "keypress_simulator_windows_plugin.h"
 
 // This must be included before many other Windows headers.
-#include <windows.h>
+#include <flutter_windows.h>
 #include <psapi.h>
 #include <string.h>
-#include <flutter_windows.h>
+#include <windows.h>
 
 #include <flutter/method_channel.h>
 #include <flutter/plugin_registrar_windows.h>
 #include <flutter/standard_method_codec.h>
 
+#include <algorithm>
 #include <memory>
 #include <sstream>
+#include <unordered_map>
+#include <vector>
 
 using flutter::EncodableList;
 using flutter::EncodableMap;
@@ -27,7 +30,8 @@ struct FindWindowData {
 };
 
 BOOL CALLBACK EnumWindowsCallback(HWND hwnd, LPARAM lParam);
-HWND FindTargetWindow(const std::string& processName, const std::string& windowTitle);
+HWND FindTargetWindow(const std::string& processName,
+                      const std::string& windowTitle);
 
 // static
 void KeypressSimulatorWindowsPlugin::RegisterWithRegistrar(
@@ -68,24 +72,89 @@ void KeypressSimulatorWindowsPlugin::SimulateKeyPress(
   }
 
   // List of compatible training apps to look for
-  std::vector<std::string> compatibleApps = {
-    "MyWhooshHD.exe",
-    "indieVelo.exe",
-    "biketerra.exe"
-  };
+  std::vector<std::string> compatibleApps = {"MyWhooshHD.exe", "MyWhoosh.exe",
+                                             "indieVelo.exe", "biketerra.exe",
+                                             "Rouvy.exe"};
 
-  // Try to find and focus a compatible app
+  // Try to find and focus (or directly target) a compatible app
+  std::string foundProcessName;
+  bool supportsBackgroundInput = true;
   HWND targetWindow = NULL;
   for (const std::string& processName : compatibleApps) {
     targetWindow = FindTargetWindow(processName, "");
     if (targetWindow != NULL) {
-      // Only focus the window if it's not already in the foreground
-      if (GetForegroundWindow() != targetWindow) {
+      foundProcessName = processName;
+      if (!supportsBackgroundInput && GetForegroundWindow() != targetWindow) {
         SetForegroundWindow(targetWindow);
-        Sleep(50); // Brief delay to ensure window is focused
+        Sleep(50);  // Brief delay to ensure window is focused
       }
       break;
     }
+  }
+
+  // If we found a target window that supports background input and it's not
+  // focused, send messages directly
+  auto postKeyMessage = [](HWND hwnd, UINT vkCode, bool down) {
+    const WORD scanCode =
+        static_cast<WORD>(MapVirtualKey(vkCode, MAPVK_VK_TO_VSC));
+    // Build lParam with repeat count 1 and scan code; set transition states for
+    // key up
+    LPARAM lParam = 1 | (static_cast<LPARAM>(scanCode) << 16);
+    if (vkCode == VK_LEFT || vkCode == VK_RIGHT || vkCode == VK_UP ||
+        vkCode == VK_DOWN || vkCode == VK_INSERT || vkCode == VK_DELETE ||
+        vkCode == VK_HOME || vkCode == VK_END || vkCode == VK_PRIOR ||
+        vkCode == VK_NEXT) {
+      lParam |= (1 << 24);  // extended key
+    }
+    if (!down) {
+      lParam |= (1 << 30);  // previous key state
+      lParam |= (1 << 31);  // transition state
+    }
+    PostMessage(hwnd, down ? WM_KEYDOWN : WM_KEYUP, vkCode, lParam);
+  };
+
+  auto sendKeyToWindow = [&postKeyMessage](HWND hwnd,
+                                           const std::vector<std::string>& mods,
+                                           UINT keyCode, bool down) {
+    auto handleModifier = [&postKeyMessage, hwnd](UINT vk, bool press) {
+      postKeyMessage(hwnd, vk, press);
+    };
+
+    if (down) {
+      for (const std::string& modifier : mods) {
+        if (modifier == "shiftModifier") {
+          handleModifier(VK_SHIFT, true);
+        } else if (modifier == "controlModifier") {
+          handleModifier(VK_CONTROL, true);
+        } else if (modifier == "altModifier") {
+          handleModifier(VK_MENU, true);
+        } else if (modifier == "metaModifier") {
+          handleModifier(VK_LWIN, true);
+        }
+      }
+      postKeyMessage(hwnd, keyCode, true);
+    } else {
+      postKeyMessage(hwnd, keyCode, false);
+      // release modifiers
+      for (const std::string& modifier : mods) {
+        if (modifier == "shiftModifier") {
+          handleModifier(VK_SHIFT, false);
+        } else if (modifier == "controlModifier") {
+          handleModifier(VK_CONTROL, false);
+        } else if (modifier == "altModifier") {
+          handleModifier(VK_MENU, false);
+        } else if (modifier == "metaModifier") {
+          handleModifier(VK_LWIN, false);
+        }
+      }
+    }
+  };
+
+  if (targetWindow != NULL && !foundProcessName.empty() &&
+      supportsBackgroundInput && GetForegroundWindow() != targetWindow) {
+    sendKeyToWindow(targetWindow, modifiers, keyCode, keyDown);
+    result->Success(flutter::EncodableValue(true));
+    return;
   }
 
   // Helper function to send modifier key events
@@ -100,7 +169,8 @@ void KeypressSimulatorWindowsPlugin::SimulateKeyPress(
   };
 
   // Helper function to process modifiers
-  auto processModifiers = [&sendModifierKey](const std::vector<std::string>& mods, bool down) {
+  auto processModifiers = [&sendModifierKey](
+                              const std::vector<std::string>& mods, bool down) {
     for (const std::string& modifier : mods) {
       if (modifier == "shiftModifier") {
         sendModifierKey(VK_SHIFT, down);
@@ -124,12 +194,13 @@ void KeypressSimulatorWindowsPlugin::SimulateKeyPress(
 
   INPUT in = {0};
   in.type = INPUT_KEYBOARD;
-  in.ki.wVk = 0;                 // when using SCANCODE, set VK=0
+  in.ki.wVk = 0;  // when using SCANCODE, set VK=0
   in.ki.wScan = sc;
   in.ki.dwFlags = KEYEVENTF_SCANCODE | (keyDown ? 0 : KEYEVENTF_KEYUP);
-  if (keyCode == VK_LEFT || keyCode == VK_RIGHT || keyCode == VK_UP || keyCode == VK_DOWN ||
-    keyCode == VK_INSERT || keyCode == VK_DELETE || keyCode == VK_HOME || keyCode == VK_END ||
-    keyCode == VK_PRIOR || keyCode == VK_NEXT) {
+  if (keyCode == VK_LEFT || keyCode == VK_RIGHT || keyCode == VK_UP ||
+      keyCode == VK_DOWN || keyCode == VK_INSERT || keyCode == VK_DELETE ||
+      keyCode == VK_HOME || keyCode == VK_END || keyCode == VK_PRIOR ||
+      keyCode == VK_NEXT) {
     in.ki.dwFlags |= KEYEVENTF_EXTENDEDKEY;
   }
   SendInput(1, &in, sizeof(INPUT));
@@ -148,7 +219,6 @@ void KeypressSimulatorWindowsPlugin::SimulateKeyPress(
 void KeypressSimulatorWindowsPlugin::SimulateMouseClick(
     const flutter::MethodCall<flutter::EncodableValue>& method_call,
     std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>> result) {
-
   const EncodableMap& args = std::get<EncodableMap>(*method_call.arguments());
   double x = 0;
   double y = 0;
@@ -156,12 +226,12 @@ void KeypressSimulatorWindowsPlugin::SimulateMouseClick(
   bool keyDown = std::get<bool>(args.at(EncodableValue("keyDown")));
   auto it_x = args.find(EncodableValue("x"));
   if (it_x != args.end() && std::holds_alternative<double>(it_x->second)) {
-      x = std::get<double>(it_x->second);
+    x = std::get<double>(it_x->second);
   }
 
   auto it_y = args.find(EncodableValue("y"));
   if (it_y != args.end() && std::holds_alternative<double>(it_y->second)) {
-      y = std::get<double>(it_y->second);
+    y = std::get<double>(it_y->second);
   }
 
   // Get the monitor containing the target point and its DPI
@@ -169,7 +239,7 @@ void KeypressSimulatorWindowsPlugin::SimulateMouseClick(
   HMONITOR monitor = MonitorFromPoint(target_point, MONITOR_DEFAULTTONEAREST);
   UINT dpi = FlutterDesktopGetDpiForMonitor(monitor);
   double scale_factor = dpi / 96.0;
-  
+
   // Scale the coordinates according to the DPI scaling
   int scaled_x = static_cast<int>(x * scale_factor);
   int scaled_y = static_cast<int>(y * scale_factor);
@@ -182,14 +252,14 @@ void KeypressSimulatorWindowsPlugin::SimulateMouseClick(
   input.type = INPUT_MOUSE;
 
   if (keyDown) {
-      // Mouse left button down
-      input.mi.dwFlags = MOUSEEVENTF_LEFTDOWN;
-      SendInput(1, &input, sizeof(INPUT));
+    // Mouse left button down
+    input.mi.dwFlags = MOUSEEVENTF_LEFTDOWN;
+    SendInput(1, &input, sizeof(INPUT));
 
   } else {
-      // Mouse left button up
-      input.mi.dwFlags = MOUSEEVENTF_LEFTUP;
-      SendInput(1, &input, sizeof(INPUT));
+    // Mouse left button up
+    input.mi.dwFlags = MOUSEEVENTF_LEFTUP;
+    SendInput(1, &input, sizeof(INPUT));
   }
 
   result->Success(flutter::EncodableValue(true));
@@ -200,7 +270,7 @@ BOOL CALLBACK EnumWindowsCallback(HWND hwnd, LPARAM lParam) {
 
   // Check if window is visible and not minimized
   if (!IsWindowVisible(hwnd) || IsIconic(hwnd)) {
-    return TRUE; // Continue enumeration
+    return TRUE;  // Continue enumeration
   }
 
   // Get window title
@@ -210,7 +280,8 @@ BOOL CALLBACK EnumWindowsCallback(HWND hwnd, LPARAM lParam) {
   // Get process name
   DWORD processId;
   GetWindowThreadProcessId(hwnd, &processId);
-  HANDLE hProcess = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, processId);
+  HANDLE hProcess =
+      OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, processId);
   char processName[MAX_PATH];
   if (hProcess) {
     DWORD size = sizeof(processName);
@@ -218,7 +289,7 @@ BOOL CALLBACK EnumWindowsCallback(HWND hwnd, LPARAM lParam) {
       // Extract just the filename from the full path
       char* filename = strrchr(processName, '\\');
       if (filename) {
-        filename++; // Skip the backslash
+        filename++;  // Skip the backslash
       } else {
         filename = processName;
       }
@@ -227,7 +298,7 @@ BOOL CALLBACK EnumWindowsCallback(HWND hwnd, LPARAM lParam) {
       if (!data->targetProcessName.empty() &&
           _stricmp(filename, data->targetProcessName.c_str()) == 0) {
         data->foundWindow = hwnd;
-        return FALSE; // Stop enumeration
+        return FALSE;  // Stop enumeration
       }
     }
     CloseHandle(hProcess);
@@ -237,13 +308,14 @@ BOOL CALLBACK EnumWindowsCallback(HWND hwnd, LPARAM lParam) {
   if (!data->targetWindowTitle.empty() &&
       _stricmp(windowTitle, data->targetWindowTitle.c_str()) == 0) {
     data->foundWindow = hwnd;
-    return FALSE; // Stop enumeration
+    return FALSE;  // Stop enumeration
   }
 
-  return TRUE; // Continue enumeration
+  return TRUE;  // Continue enumeration
 }
 
-HWND FindTargetWindow(const std::string& processName, const std::string& windowTitle) {
+HWND FindTargetWindow(const std::string& processName,
+                      const std::string& windowTitle) {
   FindWindowData data;
   data.targetProcessName = processName;
   data.targetWindowTitle = windowTitle;
@@ -253,7 +325,45 @@ HWND FindTargetWindow(const std::string& processName, const std::string& windowT
   return data.foundWindow;
 }
 
+void KeypressSimulatorWindowsPlugin::SimulateMediaKey(
+    const flutter::MethodCall<flutter::EncodableValue>& method_call,
+    std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>> result) {
+  const EncodableMap& args = std::get<EncodableMap>(*method_call.arguments());
+  std::string keyIdentifier =
+      std::get<std::string>(args.at(EncodableValue("key")));
 
+  // Map string identifier to Windows virtual key codes
+  static const std::unordered_map<std::string, UINT> keyMap = {
+      {"playPause", VK_MEDIA_PLAY_PAUSE}, {"stop", VK_MEDIA_STOP},
+      {"next", VK_MEDIA_NEXT_TRACK},      {"previous", VK_MEDIA_PREV_TRACK},
+      {"volumeUp", VK_VOLUME_UP},         {"volumeDown", VK_VOLUME_DOWN}};
+
+  auto it = keyMap.find(keyIdentifier);
+  if (it == keyMap.end()) {
+    result->Error("UNSUPPORTED_KEY", "Unsupported media key identifier");
+    return;
+  }
+  UINT vkCode = it->second;
+
+  // Send key down event
+  INPUT inputs[2] = {};
+  inputs[0].type = INPUT_KEYBOARD;
+  inputs[0].ki.wVk = static_cast<WORD>(vkCode);
+  inputs[0].ki.dwFlags = 0;  // Key down
+
+  // Send key up event
+  inputs[1].type = INPUT_KEYBOARD;
+  inputs[1].ki.wVk = static_cast<WORD>(vkCode);
+  inputs[1].ki.dwFlags = KEYEVENTF_KEYUP;
+
+  UINT eventsSent = SendInput(2, inputs, sizeof(INPUT));
+  if (eventsSent != 2) {
+    result->Error("SEND_INPUT_FAILED", "Failed to send media key input events");
+    return;
+  }
+
+  result->Success(flutter::EncodableValue(true));
+}
 
 void KeypressSimulatorWindowsPlugin::HandleMethodCall(
     const flutter::MethodCall<flutter::EncodableValue>& method_call,
@@ -262,6 +372,8 @@ void KeypressSimulatorWindowsPlugin::HandleMethodCall(
     SimulateKeyPress(method_call, std::move(result));
   } else if (method_call.method_name().compare("simulateMouseClick") == 0) {
     SimulateMouseClick(method_call, std::move(result));
+  } else if (method_call.method_name().compare("simulateMediaKey") == 0) {
+    SimulateMediaKey(method_call, std::move(result));
   } else {
     result->NotImplemented();
   }

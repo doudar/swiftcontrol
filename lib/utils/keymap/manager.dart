@@ -1,9 +1,9 @@
-import 'package:dartx/dartx.dart';
-import 'package:flutter/services.dart';
-import 'package:shadcn_flutter/shadcn_flutter.dart';
 import 'package:bike_control/utils/core.dart';
 import 'package:bike_control/utils/i18n_extension.dart';
 import 'package:bike_control/widgets/ui/toast.dart';
+import 'package:dartx/dartx.dart';
+import 'package:flutter/services.dart';
+import 'package:shadcn_flutter/shadcn_flutter.dart';
 
 import 'apps/custom_app.dart';
 
@@ -45,8 +45,8 @@ class KeymapManager {
   }) {
     return Builder(
       builder: (context) {
-        return OutlineButton(
-          child: Text(context.i18n.manageProfile),
+        return Button.outline(
+          child: Icon(Icons.settings),
           onPressed: () => showDropdown(
             context: context,
             builder: (c) => DropdownMenu(
@@ -91,9 +91,9 @@ class KeymapManager {
                     if (jsonData != null && jsonData.isNotEmpty) {
                       final success = await core.settings.importCustomAppProfile(jsonData);
                       if (success) {
-                        buildToast(context, title: context.i18n.profileImportedSuccessfully);
+                        buildToast(title: context.i18n.profileImportedSuccessfully);
                       } else {
-                        buildToast(context, title: context.i18n.failedToImportProfile);
+                        buildToast(title: context.i18n.failedToImportProfile);
                       }
                     }
                   },
@@ -107,7 +107,7 @@ class KeymapManager {
                       if (jsonData != null) {
                         Clipboard.setData(ClipboardData(text: jsonData));
 
-                        buildToast(context, title: context.i18n.profileExportedToClipboard(currentProfile));
+                        buildToast(title: context.i18n.profileExportedToClipboard(currentProfile));
                       }
                     },
                   ),
@@ -247,9 +247,11 @@ class KeymapManager {
       } else {
         final customApp = CustomApp(profileName: newName);
 
-        final connectedDevice = core.connection.devices.firstOrNull;
+        final connectedDeviceButtons = IterableFlatMap(
+          core.connection.controllerDevices,
+        ).flatMap((e) => e.availableButtons).toSet();
         core.actionHandler.supportedApp!.keymap.keyPairs.forEachIndexed((pair, index) {
-          pair.buttons.filter((button) => connectedDevice?.availableButtons.contains(button) == true).forEachIndexed((
+          pair.buttons.filter((button) => connectedDeviceButtons.contains(button) == true).forEachIndexed((
             button,
             indexB,
           ) {
@@ -257,7 +259,7 @@ class KeymapManager {
               button,
               physicalKey: pair.physicalKey,
               logicalKey: pair.logicalKey,
-              isLongPress: pair.isLongPress,
+              trigger: pair.trigger,
               touchPosition: pair.touchPosition,
               inGameAction: pair.inGameAction,
               inGameActionValue: pair.inGameActionValue,
@@ -288,9 +290,11 @@ class KeymapManager {
     } else {
       final customApp = CustomApp(profileName: newName);
 
-      final connectedDevice = core.connection.devices.firstOrNull;
+      final connectedDeviceButtons = IterableFlatMap(
+        core.connection.controllerDevices,
+      ).flatMap((e) => e.availableButtons).toSet();
       core.actionHandler.supportedApp!.keymap.keyPairs.forEachIndexed((pair, index) {
-        pair.buttons.filter((button) => connectedDevice?.availableButtons.contains(button) == true).forEachIndexed((
+        pair.buttons.filter((button) => connectedDeviceButtons.contains(button) == true).forEachIndexed((
           button,
           indexB,
         ) {
@@ -298,7 +302,7 @@ class KeymapManager {
             button,
             physicalKey: pair.physicalKey,
             logicalKey: pair.logicalKey,
-            isLongPress: pair.isLongPress,
+            trigger: pair.trigger,
             touchPosition: pair.touchPosition,
             inGameAction: pair.inGameAction,
             inGameActionValue: pair.inGameActionValue,

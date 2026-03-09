@@ -28,15 +28,10 @@ on:
         required: false
         default: true
         type: boolean
-      build_web:
-        description: 'Build for Web'
-        required: false
-        default: false
-        type: boolean
 
 env:
   SHOREBIRD_TOKEN: ${{ secrets.SHOREBIRD_TOKEN }}
-  FLUTTER_VERSION: 3.38.4
+  FLUTTER_VERSION: 3.41.4
 
 jobs:
   build:
@@ -52,6 +47,17 @@ jobs:
       #1 Checkout Repository
       - name: Checkout Repository
         uses: actions/checkout@v3
+        with:
+          submodules: recursive
+          token: ${{ secrets.PAT_TOKEN }}
+
+      - name: rename pubspec_overrides_ci.yaml to pubspec_overrides.yaml
+        run: |
+            if [ -f pubspec_overrides_ci.yaml ]; then
+                mv pubspec_overrides_ci.yaml pubspec_overrides.yaml
+            else 
+                echo "No pubspec_overrides_ci.yaml found, skipping rename."
+            fi
 
       - name: Install certificates
         if: inputs.build_mac || inputs.build_ios
@@ -97,12 +103,13 @@ jobs:
           cp $PP_PATH_MACOS ~/Library/MobileDevice/Provisioning\ Profiles
 
       - name: 🐦 Setup Shorebird
-        if: inputs.build_mac || inputs.build_android || inputs.build_ios || inputs.build_web
+        #if: inputs.build_mac || inputs.build_android || inputs.build_ios
+        if: inputs.build_android || inputs.build_ios
         uses: shorebirdtech/setup-shorebird@v1
         with:
           cache: true
 
-      - name: Set Up Flutter
+      - name: Set Up Flutter maCOS
         uses: subosito/flutter-action@v2
         with:
           channel: 'stable'
@@ -114,12 +121,17 @@ jobs:
           flutter pub global run intl_utils:generate;
 
       - name: 🚀 Shorebird Release macOS
-        if: inputs.build_mac
+        if: inputs.build_mac && false
         uses: shorebirdtech/shorebird-release@v1
         with:
           flutter-version: ${{ env.FLUTTER_VERSION }}
           platform: macos
-          args: "-- --dart-define=VERIFYING_SHARED_SECRET=${{ secrets.VERIFYING_SHARED_SECRET }}"
+          args: "--obfuscate --split-debug-info=symbols -- --dart-define=VERIFYING_SHARED_SECRET=${{ secrets.VERIFYING_SHARED_SECRET }} --dart-define=REVENUECAT_API_KEY_IOS=${{ secrets.REVENUECAT_API_KEY_IOS }} --dart-define=SUPABASE_ANON_KEY=${{ secrets.SUPABASE_ANON_KEY }}"
+
+      - name: Flutter Release macOS
+        if: inputs.build_mac
+        run:
+          flutter build macos --release --obfuscate --split-debug-info=symbols --dart-define=VERIFYING_SHARED_SECRET=${{ secrets.VERIFYING_SHARED_SECRET }} --dart-define=REVENUECAT_API_KEY_IOS=${{ secrets.REVENUECAT_API_KEY_IOS }} --dart-define=SUPABASE_ANON_KEY=${{ secrets.SUPABASE_ANON_KEY }}
 
       - name: Decode Keystore
         if: inputs.build_android
@@ -133,22 +145,7 @@ jobs:
         with:
           flutter-version: ${{ env.FLUTTER_VERSION }}
           platform: android
-          args: "--artifact=apk"
-
-      - name: Build Web
-        if: inputs.build_web
-        run: flutter build web --release --base-href "/swiftcontrol/"
-
-      - name: Upload static files as artifact
-        if: inputs.build_web
-        id: deployment
-        uses: actions/upload-pages-artifact@v3
-        with:
-          path: build/web
-
-      - name: Web Deploy
-        if: inputs.build_web
-        uses: actions/deploy-pages@v4
+          args: "--obfuscate --split-debug-info=symbols -- --dart-define=REVENUECAT_API_KEY_ANDROID=${{ secrets.REVENUECAT_API_KEY_ANDROID }} --dart-define=SUPABASE_ANON_KEY=${{ secrets.SUPABASE_ANON_KEY }}"
 
       - name: Extract latest changelog
         id: changelog
@@ -169,7 +166,7 @@ jobs:
         with:
           flutter-version: ${{ env.FLUTTER_VERSION }}
           platform: ios
-          args: "--export-options-plist ios/ExportOptions.plist -- --dart-define=VERIFYING_SHARED_SECRET=${{ secrets.VERIFYING_SHARED_SECRET }}"
+          args: "--export-options-plist ios/ExportOptions.plist --obfuscate --split-debug-info=symbols -- --dart-define=VERIFYING_SHARED_SECRET=${{ secrets.VERIFYING_SHARED_SECRET }} --dart-define=REVENUECAT_API_KEY_IOS=${{ secrets.REVENUECAT_API_KEY_IOS }} --dart-define=SUPABASE_ANON_KEY=${{ secrets.SUPABASE_ANON_KEY }}"
 
       - name: Prepare App Store authentication key
         if: inputs.build_ios || inputs.build_mac
@@ -207,41 +204,6 @@ jobs:
         run: |
           xcrun altool --upload-app -f build/ios/ipa/swift_play.ipa -t ios --apiKey "$APPSTORE_API_KEY" --apiIssuer "$APPSTORE_API_ISSUER_ID";
 
-      - name: Handle Android archives
-        if: inputs.build_android && inputs.build_github && false
-        run: |
-          cp build/app/outputs/flutter-apk/app-release.apk build/app/outputs/flutter-apk/BikeControl.android.apk
-
-      - name: Code Signing of macOS app
-        if: inputs.build_mac && inputs.build_github && false
-        run: /usr/bin/codesign --deep --force -s "$DEVELOPER_ID_APPLICATION_SIGNING_IDENTITY" --entitlements ../../../../../macos/Runner/Release.entitlements --options runtime BikeControl.app -v
-        working-directory: build/macos/Build/Products/Release
-        env:
-          DEVELOPER_ID_APPLICATION_SIGNING_IDENTITY: ${{ secrets.DEVELOPER_ID_APPLICATION_SIGNING_IDENTITY }}
-
-      - name: Handle macOS archives
-        if: inputs.build_mac && inputs.build_github && false
-        run: |
-          cd build/macos/Build/Products/Release/
-          zip -r BikeControl.macos.zip BikeControl.app/
-
-      - name: Upload Android Artifacts
-        if: inputs.build_android && inputs.build_github && false
-        uses: actions/upload-artifact@v4
-        with:
-          overwrite: true
-          name: Releases
-          path: |
-            build/app/outputs/flutter-apk/BikeControl.android.apk
-
-      - name: Upload macOS Artifacts
-        if: inputs.build_mac && inputs.build_github && false
-        uses: actions/upload-artifact@v4
-        with:
-          overwrite: true
-          name: Releases
-          path: |
-            build/macos/Build/Products/Release/BikeControl.macos.zip
 
         #10 Extract Version
       - name: Extract version from pubspec.yaml
@@ -250,6 +212,13 @@ jobs:
         run: |
           version=$(grep '^version: ' pubspec.yaml | cut -d ' ' -f 2 | tr -d '\r')
           echo "VERSION=$version" >> $GITHUB_ENV
+
+      - name: Upload Symbols
+        uses: actions/upload-artifact@v4
+        with:
+          overwrite: true
+          name: Symbols
+          path: symbols/
 
         #13 Create Release
       - name: Create Release
@@ -272,6 +241,18 @@ jobs:
       #1 Checkout Repository
       - name: Checkout Repository
         uses: actions/checkout@v3
+        with:
+          submodules: recursive
+          token: ${{ secrets.PAT_TOKEN }}
+
+      - name: rename pubspec_overrides_ci.yaml to pubspec_overrides.yaml
+        shell: pwsh
+        run: |
+            if (Test-Path pubspec_overrides_ci.yaml) {
+                Rename-Item -Path pubspec_overrides_ci.yaml -NewName pubspec_overrides.yaml
+            } else {
+                Write-Output "No pubspec_overrides_ci.yaml found, skipping rename."
+            }
 
       - name: Extract version from pubspec.yaml (Windows)
         shell: pwsh
@@ -302,11 +283,11 @@ jobs:
         with:
           flutter-version: ${{ env.FLUTTER_VERSION }}
           platform: windows
+          args: "--obfuscate --split-debug-info=symbols-win -- --dart-define=SUPABASE_ANON_KEY=${{ secrets.SUPABASE_ANON_KEY }}"
 
-      - name: Zip directory (Windows)
+      - name: Zip Windows release
         shell: pwsh
         run: |
-  
           $source = "C:\Windows\System32"
           $destination = "build\windows\x64\runner\Release"
           
@@ -325,36 +306,43 @@ jobs:
               Write-Warning "$dll not found in $source"
             }
           }
-          Compress-Archive -Path "build/windows/x64/runner/Release/*" -DestinationPath "build/windows/x64/runner/Release/bike_control.windows.zip"
+          $zipPath = "build/windows/bike_control.windows.zip"
+          if (Test-Path $zipPath) {
+            Remove-Item $zipPath -Force
+          }
+          Compress-Archive -Path "build/windows/x64/runner/Release/*" -DestinationPath $zipPath
 
-      - uses: microsoft/setup-msstore-cli@v1
-        if: false
+      - name: Create Store MSIX package
+        run: dart run msix:create --store --output-name bike_control.store
 
-      - name: Configure the Microsoft Store CLI
-        if: false
-        run: msstore reconfigure --tenantId $ --clientId $ --clientSecret $ --sellerId $
+      - name: Upload Store Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          overwrite: true
+          name: BikeControl Store
+          path: build/windows/x64/runner/Release/bike_control.store.msix
 
-      - name: Create MSIX package
-        run: dart run msix:create
-
-      - name: Publish MSIX to the Microsoft Store
-        if: false
-        run: msstore publish -v "build/windows/x64/runner/Release/"
+      - name: Upload Windows artifact
+        uses: actions/upload-artifact@v4
+        with:
+          overwrite: true
+          name: Windows Release
+          path: build/windows/bike_control.windows.zip
 
       - name: Upload Artifacts
         uses: actions/upload-artifact@v4
         with:
           overwrite: true
-          name: Releases
-          path: |
-            build/windows/x64/runner/Release/bike_control.windows.zip
-            build/windows/x64/runner/Release/bike_control.msix
+          name: Windows Symbols
+          path: symbols-win/
 
-      - name: Update Release
+      - name: Create Release (Windows zip)
+        if: inputs.build_github
         uses: ncipollo/release-action@v1
         with:
+          artifacts: "build/windows/bike_control.windows.zip"
           allowUpdates: true
-          artifacts: "build/windows/x64/runner/Release/bike_control.msix"
           prerelease: true
+          replacesArtifacts: false
           tag: v${{ env.VERSION }}
           token: ${{ secrets.TOKEN }}

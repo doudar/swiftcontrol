@@ -2,13 +2,17 @@ import 'package:bike_control/gen/l10n.dart';
 import 'package:bike_control/pages/button_edit.dart';
 import 'package:bike_control/pages/markdown.dart';
 import 'package:bike_control/utils/i18n_extension.dart';
+import 'package:bike_control/utils/keymap/buttons.dart';
 import 'package:bike_control/utils/requirements/platform.dart';
 import 'package:bike_control/widgets/ui/beta_pill.dart';
+import 'package:bike_control/widgets/ui/colored_title.dart';
+import 'package:bike_control/widgets/ui/permissions_list.dart';
 import 'package:bike_control/widgets/ui/small_progress_indicator.dart';
 import 'package:bike_control/widgets/ui/toast.dart';
 import 'package:dartx/dartx.dart';
 import 'package:flutter/foundation.dart';
 import 'package:shadcn_flutter/shadcn_flutter.dart';
+import 'package:url_launcher/url_launcher_string.dart';
 
 enum ConnectionMethodType {
   bluetooth,
@@ -25,14 +29,17 @@ class ConnectionMethod extends StatefulWidget {
   final Widget? additionalChild;
   final bool? isConnected;
   final bool? isStarted;
+  final bool isRecommended;
   final bool isEnabled;
   final bool showTroubleshooting;
   final List<PlatformRequirement> requirements;
+  final List<InGameAction>? supportedActions;
   final Function(bool) onChange;
 
   const ConnectionMethod({
     super.key,
     required this.title,
+    required this.isRecommended,
     required this.type,
     required this.isEnabled,
     this.additionalChild,
@@ -40,6 +47,7 @@ class ConnectionMethod extends StatefulWidget {
     this.instructionLink,
     this.showTroubleshooting = false,
     required this.onChange,
+    required this.supportedActions,
     required this.requirements,
     this.isConnected,
     this.isStarted,
@@ -86,7 +94,7 @@ class _ConnectionMethodState extends State<ConnectionMethod> with WidgetsBinding
     return SelectableCard(
       onPressed: () {
         if (kIsWeb) {
-          buildToast(context, title: 'Not Supported on Web :)');
+          buildToast(title: 'Not Supported on Web :)');
         } else if (widget.requirements.isEmpty) {
           widget.onChange(!widget.isEnabled);
         } else {
@@ -114,22 +122,29 @@ class _ConnectionMethodState extends State<ConnectionMethod> with WidgetsBinding
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             spacing: 8,
             children: [
-              PrimaryBadge(
-                trailing: widget.isStarted == true && (widget.isConnected == false)
-                    ? SizedBox(
-                        width: 19,
-                        height: 19,
-                        child: SmallProgressIndicator(
-                          color: Theme.of(context).colorScheme.primaryForeground,
-                        ),
-                      )
-                    : switch (widget.type) {
-                        ConnectionMethodType.bluetooth => Icon(Icons.bluetooth),
-                        ConnectionMethodType.network => Icon(Icons.wifi),
-                        ConnectionMethodType.openBikeControl => Icon(Icons.directions_bike),
-                        ConnectionMethodType.local => Icon(Icons.keyboard),
-                      },
-                child: Text(widget.type.name.capitalize()),
+              Row(
+                spacing: 8,
+                children: [
+                  PrimaryBadge(
+                    trailing: widget.isStarted == true && (widget.isConnected == false)
+                        ? SizedBox(
+                            width: 19,
+                            height: 19,
+                            child: SmallProgressIndicator(
+                              color: Theme.of(context).colorScheme.primaryForeground,
+                            ),
+                          )
+                        : switch (widget.type) {
+                            ConnectionMethodType.bluetooth => Icon(Icons.bluetooth),
+                            ConnectionMethodType.network => Icon(Icons.wifi),
+                            ConnectionMethodType.openBikeControl => Icon(Icons.directions_bike),
+                            ConnectionMethodType.local => Icon(Icons.keyboard),
+                          },
+                    child: Text(widget.type.name.capitalize()),
+                  ),
+
+                  if (widget.isRecommended) SecondaryBadge(leading: Icon(Icons.star), child: Text('Recommended')),
+                ],
               ),
               if (widget.title == context.i18n.enablePairingProcess ||
                   widget.title == context.i18n.enableZwiftControllerBluetooth)
@@ -150,35 +165,77 @@ class _ConnectionMethodState extends State<ConnectionMethod> with WidgetsBinding
           if (widget.isEnabled && widget.additionalChild != null) widget.additionalChild!,
           if (widget.instructionLink != null || widget.showTroubleshooting) SizedBox(height: 8),
           if (widget.instructionLink != null)
-            Button(
-              style: widget.isEnabled && Theme.of(context).brightness == Brightness.light
-                  ? ButtonStyle.outline().withBorder(border: Border.all(color: Colors.gray.shade500))
-                  : ButtonStyle.outline(),
-              leading: Icon(Icons.help_outline),
-              onPressed: () {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(builder: (c) => MarkdownPage(assetPath: widget.instructionLink!)),
-                );
-              },
-              child: Text(AppLocalizations.of(context).instructions),
-            ),
-          if (widget.showTroubleshooting && widget.instructionLink == null)
-            Button(
-              style: widget.isEnabled && Theme.of(context).brightness == Brightness.light
-                  ? ButtonStyle.outline().withBorder(border: Border.all(color: Colors.gray.shade500))
-                  : ButtonStyle.outline(),
-              leading: Icon(Icons.help_outline),
-
-              onPressed: () {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (_) => MarkdownPage(assetPath: 'TROUBLESHOOTING.md'),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                Button(
+                  style: widget.isEnabled && Theme.of(context).brightness == Brightness.light
+                      ? ButtonStyle.outline().withBorder(border: Border.all(color: Colors.gray.shade500))
+                      : ButtonStyle.outline(),
+                  leading: Icon(
+                    widget.instructionLink!.contains("youtube") ? Icons.ondemand_video : Icons.help_outline,
                   ),
-                );
-              },
-              child: Text(context.i18n.troubleshootingGuide),
+                  onPressed: () {
+                    if (widget.instructionLink!.contains("youtube")) {
+                      launchUrlString(widget.instructionLink!);
+                    } else {
+                      openDrawer(
+                        context: context,
+                        position: OverlayPosition.bottom,
+                        builder: (c) => MarkdownPage(assetPath: widget.instructionLink!),
+                      );
+                    }
+                  },
+                  child: Text(AppLocalizations.of(context).instructions),
+                ),
+                if (widget.supportedActions != null)
+                  Button.outline(
+                    leading: Container(
+                      alignment: Alignment.center,
+                      decoration: BoxDecoration(
+                        color: Theme.of(context).colorScheme.primary,
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      padding: EdgeInsets.symmetric(horizontal: 6),
+                      margin: EdgeInsets.only(right: 4),
+                      child: Text(
+                        widget.supportedActions!.length.toString(),
+                        style: TextStyle(
+                          color: Theme.of(context).colorScheme.primaryForeground,
+                        ),
+                      ),
+                    ),
+                    onPressed: () {
+                      openDrawer(
+                        context: context,
+                        position: OverlayPosition.right,
+                        builder: (c) => Container(
+                          padding: EdgeInsets.symmetric(vertical: 32, horizontal: 16),
+                          width: 230,
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            spacing: 12,
+                            children: [
+                              ColoredTitle(
+                                text: AppLocalizations.of(context).supportedActions,
+                              ),
+                              Gap(12),
+                              ...widget.supportedActions!.map(
+                                (e) => Basic(
+                                  leading: e.icon != null ? Icon(e.icon) : null,
+                                  title: Text(e.title),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      );
+                    },
+                    child: Text(AppLocalizations.of(context).supportedActions),
+                  ),
+              ],
             ),
         ],
       ),
@@ -189,7 +246,7 @@ class _ConnectionMethodState extends State<ConnectionMethod> with WidgetsBinding
     Future.wait(widget.requirements.map((e) => e.getStatus())).then((result) {
       final allDone = result.every((e) => e);
 
-      if (context.mounted) {
+      if (context.mounted && widget.isEnabled != allDone) {
         widget.onChange(allDone);
       }
     });
@@ -200,94 +257,15 @@ Future openPermissionSheet(BuildContext context, List<PlatformRequirement> notDo
   return openSheet(
     context: context,
     draggable: true,
-    builder: (context) => _PermissionList(requirements: notDone),
+    builder: (context) => Padding(
+      padding: const EdgeInsets.all(16.0),
+      child: PermissionList(
+        requirements: notDone,
+        onDone: () {
+          closeSheet(context);
+        },
+      ),
+    ),
     position: OverlayPosition.bottom,
   );
-}
-
-class _PermissionList extends StatefulWidget {
-  final List<PlatformRequirement> requirements;
-  const _PermissionList({super.key, required this.requirements});
-
-  @override
-  State<_PermissionList> createState() => _PermissionListState();
-}
-
-class _PermissionListState extends State<_PermissionList> with WidgetsBindingObserver {
-  @override
-  void initState() {
-    super.initState();
-
-    WidgetsBinding.instance.addObserver(this);
-  }
-
-  @override
-  void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (widget.requirements.isNotEmpty) {
-      if (state == AppLifecycleState.resumed) {
-        Future.wait(widget.requirements.map((e) => e.getStatus())).then((_) {
-          final allDone = widget.requirements.every((e) => e.status);
-          if (allDone && context.mounted) {
-            closeSheet(context);
-          } else if (context.mounted) {
-            setState(() {});
-          }
-        });
-      }
-    }
-  }
-
-  @override
-  void dispose() {
-    super.dispose();
-    WidgetsBinding.instance.removeObserver(this);
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: EdgeInsets.all(16),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        mainAxisSize: MainAxisSize.min,
-        spacing: 18,
-        children: [
-          Text(
-            context.i18n.theFollowingPermissionsRequired,
-            style: TextStyle(fontWeight: FontWeight.bold),
-          ),
-          ...widget.requirements.map(
-            (e) => Row(
-              children: [
-                Expanded(
-                  child: Basic(
-                    title: Text(e.name),
-                    subtitle: e.description != null ? Text(e.description!) : null,
-                    trailing: Button(
-                      style: e.status ? ButtonStyle.secondary() : ButtonStyle.primary(),
-                      onPressed: e.status
-                          ? null
-                          : () {
-                              e
-                                  .call(context, () {
-                                    setState(() {});
-                                  })
-                                  .then((_) {
-                                    setState(() {});
-                                    if (widget.requirements.all((e) => e.status)) {
-                                      closeSheet(context);
-                                    }
-                                  });
-                            },
-                      child: e.status ? Text(context.i18n.granted) : Text(context.i18n.grant),
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
 }

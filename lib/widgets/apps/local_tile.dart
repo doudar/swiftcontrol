@@ -189,9 +189,12 @@ class _LocalTileState extends State<LocalTile> {
         ),
     ];
     return ConnectionMethod(
+      supportedActions: null,
       isEnabled: core.settings.getLocalEnabled(),
       type: ConnectionMethodType.local,
+      isRecommended: true,
       showTroubleshooting: true,
+      instructionLink: 'INSTRUCTIONS_LOCAL.md',
       title: context.i18n.controlAppUsingModes(
         core.settings.getTrainerApp()?.name ?? '',
         core.actionHandler.supportedModes.joinToString(transform: (e) => e.name.capitalize()),

@@ -1,10 +1,5 @@
 import 'dart:io';
 
-import 'package:bluetooth_low_energy/bluetooth_low_energy.dart';
-import 'package:flutter/foundation.dart';
-import 'package:keypress_simulator/keypress_simulator.dart';
-import 'package:permission_handler/permission_handler.dart';
-import 'package:shadcn_flutter/shadcn_flutter.dart';
 import 'package:bike_control/gen/l10n.dart';
 import 'package:bike_control/main.dart';
 import 'package:bike_control/utils/core.dart';
@@ -14,15 +9,19 @@ import 'package:bike_control/utils/keymap/apps/supported_app.dart';
 import 'package:bike_control/utils/keymap/apps/zwift.dart';
 import 'package:bike_control/utils/requirements/platform.dart';
 import 'package:bike_control/widgets/ui/toast.dart';
+import 'package:bluetooth_low_energy/bluetooth_low_energy.dart';
+import 'package:flutter/foundation.dart';
+import 'package:keypress_simulator/keypress_simulator.dart';
+import 'package:permission_handler/permission_handler.dart';
+import 'package:shadcn_flutter/shadcn_flutter.dart';
 import 'package:universal_ble/universal_ble.dart';
 
 class KeyboardRequirement extends PlatformRequirement {
-  KeyboardRequirement() : super(AppLocalizations.current.keyboardAccess);
+  KeyboardRequirement() : super(AppLocalizations.current.keyboardAccess, icon: Icons.keyboard);
 
   @override
   Future<void> call(BuildContext context, VoidCallback onUpdate) async {
     buildToast(
-      context,
       title: AppLocalizations.current.enableKeyboardAccessMessage,
     );
     await keyPressSimulator.requestAccess(onlyOpenPrefPane: Platform.isMacOS);
@@ -36,7 +35,8 @@ class KeyboardRequirement extends PlatformRequirement {
 }
 
 class BluetoothAdvertiseRequirement extends PlatformRequirement {
-  BluetoothAdvertiseRequirement() : super(AppLocalizations.current.bluetoothAdvertiseAccess);
+  BluetoothAdvertiseRequirement()
+    : super(AppLocalizations.current.bluetoothAdvertiseAccess, icon: Icons.bluetooth_audio);
 
   @override
   Future<void> call(BuildContext context, VoidCallback onUpdate) async {
@@ -51,7 +51,7 @@ class BluetoothAdvertiseRequirement extends PlatformRequirement {
 }
 
 class BluetoothTurnedOn extends PlatformRequirement {
-  BluetoothTurnedOn() : super(AppLocalizations.current.bluetoothTurnedOn);
+  BluetoothTurnedOn() : super(AppLocalizations.current.bluetoothTurnedOn, icon: Icons.bluetooth);
 
   @override
   Future<void> call(BuildContext context, VoidCallback onUpdate) async {
@@ -61,7 +61,7 @@ class BluetoothTurnedOn extends PlatformRequirement {
       await PeripheralManager().showAppSettings();
     } else if (currentState == AvailabilityState.poweredOff) {
       if (Platform.isMacOS) {
-        buildToast(context, title: name);
+        buildToast(title: name);
       } else {
         await UniversalBle.enableBluetooth();
       }
@@ -99,6 +99,7 @@ class UnsupportedPlatform extends PlatformRequirement {
         kIsWeb
             ? AppLocalizations.current.browserNotSupported
             : AppLocalizations.current.platformNotSupported('platform'),
+        icon: Icons.error_outline,
       ) {
     status = false;
   }
@@ -113,7 +114,7 @@ class UnsupportedPlatform extends PlatformRequirement {
 }
 
 class ErrorRequirement extends PlatformRequirement {
-  ErrorRequirement(super.name) {
+  ErrorRequirement(super.name, {required super.icon}) {
     status = false;
   }
 
@@ -163,13 +164,13 @@ enum Target {
 
     return switch (this) {
       Target.thisDevice => false,
-      _ => supportedApp == null || supportedApp.supportsOpenBikeProtocol == false,
+      _ => supportedApp == null || supportedApp.supportsOpenBikeProtocol.isEmpty,
     };
   }
 
   String getDescription(SupportedApp? app) {
     final appName = app?.name ?? 'the Trainer app';
-    final preferredConnectionMethod = app?.supportsOpenBikeProtocol == true
+    final preferredConnectionMethod = app?.supportsOpenBikeProtocol.isNotEmpty == true
         ? AppLocalizations.current.openBikeControlConnection
         : app is MyWhoosh
         ? AppLocalizations.current.myWhooshDirectConnection
@@ -192,18 +193,5 @@ enum Target {
       Target.thisDevice when !kIsWeb && !Platform.isIOS => ConnectionType.local,
       _ => ConnectionType.remote,
     };
-  }
-}
-
-class PlaceholderRequirement extends PlatformRequirement {
-  PlaceholderRequirement() : super(AppLocalizations.current.requirement);
-
-  @override
-  Future<void> call(BuildContext context, VoidCallback onUpdate) async {}
-
-  @override
-  Future<bool> getStatus() async {
-    status = false;
-    return false;
   }
 }

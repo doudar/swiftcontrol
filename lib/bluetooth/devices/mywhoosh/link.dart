@@ -2,7 +2,6 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:bike_control/bluetooth/devices/trainer_connection.dart';
-import 'package:bike_control/bluetooth/devices/zwift/protocol/zp.pb.dart';
 import 'package:bike_control/bluetooth/messages/notification.dart';
 import 'package:bike_control/gen/l10n.dart';
 import 'package:bike_control/utils/actions/base_actions.dart';
@@ -11,6 +10,7 @@ import 'package:bike_control/utils/keymap/buttons.dart';
 import 'package:bike_control/utils/keymap/keymap.dart';
 import 'package:bike_control/utils/requirements/multi.dart';
 import 'package:flutter/foundation.dart';
+import 'package:prop/prop.dart';
 
 class WhooshLink extends TrainerConnection {
   Socket? _socket;
@@ -27,6 +27,7 @@ class WhooshLink extends TrainerConnection {
           InGameAction.cameraAngle,
           InGameAction.emote,
           InGameAction.uturn,
+          InGameAction.tuck,
           InGameAction.steerLeft,
           InGameAction.steerRight,
         ],
@@ -66,16 +67,17 @@ class WhooshLink extends TrainerConnection {
 
     // Accept connection
     _server!.listen(
-      (Socket socket) {
+      (Socket socket) async {
+        if (kDebugMode) {
+          print('Client connected: ${socket.remoteAddress.address}:${socket.remotePort}');
+        }
+
+        SharedLogic.keepAlive();
         _socket = socket;
         core.connection.signalNotification(
           AlertNotification(LogLevel.LOGLEVEL_INFO, AppLocalizations.current.myWhooshLinkConnected),
         );
         isConnected.value = true;
-        if (kDebugMode) {
-          print('Client connected: ${socket.remoteAddress.address}:${socket.remotePort}');
-        }
-
         // Listen for data from the client
         socket.listen(
           (List<int> data) {
@@ -89,6 +91,8 @@ class WhooshLink extends TrainerConnection {
           },
           onDone: () {
             print('Client disconnected: $socket');
+
+            SharedLogic.stopKeepAlive();
             isConnected.value = false;
             core.connection.signalNotification(
               AlertNotification(LogLevel.LOGLEVEL_WARNING, 'MyWhoosh Link disconnected'),
@@ -130,6 +134,12 @@ class WhooshLink extends TrainerConnection {
         'MessageType': 'Controls',
         'InGameControls': {
           'UTurn': 'true',
+        },
+      },
+      InGameAction.tuck => {
+        'MessageType': 'Controls',
+        'InGameControls': {
+          'Tuck': 'true',
         },
       },
       InGameAction.steerLeft => {

@@ -6,6 +6,7 @@ import 'package:bike_control/bluetooth/devices/openbikecontrol/obc_mdns_emulator
 import 'package:bike_control/bluetooth/devices/trainer_connection.dart';
 import 'package:bike_control/bluetooth/devices/zwift/ftms_mdns_emulator.dart';
 import 'package:bike_control/bluetooth/devices/zwift/zwift_emulator.dart';
+import 'package:bike_control/bluetooth/remote_keyboard_pairing.dart';
 import 'package:bike_control/bluetooth/remote_pairing.dart';
 import 'package:bike_control/main.dart';
 import 'package:bike_control/pages/touch_area.dart';
@@ -22,7 +23,8 @@ import 'package:bike_control/widgets/apps/openbikecontrol_ble_tile.dart';
 import 'package:bike_control/widgets/apps/openbikecontrol_mdns_tile.dart';
 import 'package:bike_control/widgets/apps/zwift_mdns_tile.dart';
 import 'package:bike_control/widgets/apps/zwift_tile.dart';
-import 'package:bike_control/widgets/pair_widget.dart';
+import 'package:bike_control/widgets/keyboard_pair_widget.dart';
+import 'package:bike_control/widgets/mouse_pair_widget.dart';
 import 'package:bike_control/widgets/ui/gradient_text.dart';
 import 'package:bike_control/widgets/ui/toast.dart';
 import 'package:bike_control/widgets/ui/warning.dart';
@@ -41,6 +43,7 @@ class ButtonSimulator extends StatefulWidget {
 class _ButtonSimulatorState extends State<ButtonSimulator> {
   late final FocusNode _focusNode;
   Map<InGameAction, String> _hotkeys = {};
+  Map<InGameAction, List<int>> _recentValues = {};
 
   // Default hotkeys for actions
   static const List<String> _defaultHotkeyOrder = [
@@ -86,6 +89,7 @@ class _ButtonSimulatorState extends State<ButtonSimulator> {
   InGameAction? _pressedAction;
 
   DateTime? _lastDown;
+  final ScrollController _scrollController = ScrollController();
 
   @override
   void initState() {
@@ -98,10 +102,12 @@ class _ButtonSimulatorState extends State<ButtonSimulator> {
   @override
   void dispose() {
     _focusNode.dispose();
+    _scrollController.dispose();
     super.dispose();
   }
 
   Future<void> _loadHotkeys() async {
+    _loadRecentValues();
     final savedHotkeys = core.settings.getButtonSimulatorHotkeys();
 
     // If no saved hotkeys, initialize with defaults
@@ -134,6 +140,46 @@ class _ButtonSimulatorState extends State<ButtonSimulator> {
         _hotkeys = savedHotkeys;
       });
     }
+  }
+
+  void _loadRecentValues() {
+    final map = <InGameAction, List<int>>{};
+    for (final action in InGameAction.values) {
+      if (action.possibleValues != null) {
+        map[action] = action.possibleValues!.take(2).toList();
+      }
+    }
+    setState(() {
+      _recentValues = map;
+    });
+  }
+
+  Future<void> _sendQuickValue(InGameAction action, int value, TrainerConnection connection) async {
+    if (!connection.isConnected.value) {
+      buildToast(title: 'No connected trainer.');
+      return;
+    }
+    await connection.sendAction(
+      KeyPair(
+        buttons: [],
+        physicalKey: null,
+        logicalKey: null,
+        inGameAction: action,
+        inGameActionValue: value,
+      ),
+      isKeyDown: true,
+      isKeyUp: true,
+    );
+    _updateRecentValue(action, value);
+  }
+
+  void _updateRecentValue(InGameAction action, int value) {
+    final list = List<int>.from(_recentValues[action] ?? []);
+    list.remove(value);
+    list.insert(0, value);
+    setState(() {
+      _recentValues[action] = list.take(2).toList();
+    });
   }
 
   KeyEventResult _onKey(FocusNode node, KeyEvent event) {
@@ -170,7 +216,7 @@ class _ButtonSimulatorState extends State<ButtonSimulator> {
     } else {
       _pressedAction = null;
       setState(() {});
-      buildToast(context, title: 'No connected trainer.');
+      buildToast(title: 'No connected trainer.');
     }
 
     return KeyEventResult.ignored;
@@ -200,7 +246,9 @@ class _ButtonSimulatorState extends State<ButtonSimulator> {
           ),
         ],
         child: Scrollbar(
+          controller: _scrollController,
           child: SingleChildScrollView(
+            controller: _scrollController,
             padding: EdgeInsets.all(16),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -228,12 +276,21 @@ class _ButtonSimulatorState extends State<ButtonSimulator> {
                       ),
                       OpenBikeControlMdnsEmulator.connectionTitle => OpenBikeControlMdnsTile(),
                       OpenBikeControlBluetoothEmulator.connectionTitle => OpenBikeControlBluetoothTile(),
-                      RemotePairing.connectionTitle => RemotePairingWidget(),
+                      RemotePairing.connectionTitle => RemoteMousePairingWidget(),
+                      RemoteKeyboardPairing.connectionTitle => RemoteKeyboardPairingWidget(),
                       _ => SizedBox.shrink(),
                     },
                 ...connectedTrainers.map(
                   (connection) {
-                    final supportedActions = connection.supportedActions;
+                    final supportedActions = connection.supportedActions == InGameAction.values
+                        ? core.settings
+                              .getTrainerApp()!
+                              .keymap
+                              .keyPairs
+                              .mapNotNull((k) => k.inGameAction)
+                              .distinct()
+                              .toList()
+                        : connection.supportedActions;
 
                     final actionGroups = {
                       if (supportedActions.contains(InGameAction.shiftUp) &&
@@ -293,34 +350,7 @@ class _ButtonSimulatorState extends State<ButtonSimulator> {
                                   ).toList(),
                                 )
                               else
-                                GridView.count(
-                                  shrinkWrap: true,
-                                  physics: NeverScrollableScrollPhysics(),
-                                  crossAxisSpacing: 8,
-                                  mainAxisSpacing: 8,
-                                  crossAxisCount: min(group.value.length, 3),
-                                  childAspectRatio: isMobile ? 1 : 2.4,
-                                  children: group.value.map(
-                                    (action) {
-                                      final hotkey = _hotkeys[action];
-                                      return Stack(
-                                        fit: StackFit.expand,
-                                        children: [
-                                          _buildButton(action, group, connection, isMobile),
-
-                                          if (hotkey != null)
-                                            Positioned(
-                                              top: -4,
-                                              right: -4,
-                                              child: KeyWidget(
-                                                label: hotkey.toUpperCase(),
-                                              ),
-                                            ),
-                                        ],
-                                      );
-                                    },
-                                  ).toList(),
-                                ),
+                                _buildActionGrid(group, connection, isMobile),
                               SizedBox(height: 12),
                             ],
                           ],
@@ -376,6 +406,108 @@ class _ButtonSimulatorState extends State<ButtonSimulator> {
             ),
           ),
         ),
+      ),
+    );
+  }
+
+  Widget _buildActionGrid(
+    MapEntry<String, List<InGameAction>> group,
+    TrainerConnection connection,
+    bool isMobile,
+  ) {
+    final hasQuickAccess = group.value.any((a) => a.possibleValues != null);
+
+    if (!hasQuickAccess) {
+      return GridView.count(
+        shrinkWrap: true,
+        physics: NeverScrollableScrollPhysics(),
+        crossAxisSpacing: 8,
+        mainAxisSpacing: 8,
+        crossAxisCount: min(group.value.length, 3),
+        childAspectRatio: isMobile ? 1 : 2.4,
+        children: group.value.map((action) {
+          final hotkey = _hotkeys[action];
+          return Stack(
+            fit: StackFit.expand,
+            children: [
+              _buildButton(action, group, connection, isMobile),
+              if (hotkey != null)
+                Positioned(
+                  top: -4,
+                  right: -4,
+                  child: KeyWidget(label: hotkey.toUpperCase()),
+                ),
+            ],
+          );
+        }).toList(),
+      );
+    }
+
+    // Use Wrap layout when quick-access buttons are present
+    final crossAxisCount = min(group.value.length, 3);
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final availableWidth = constraints.maxWidth;
+        return Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: group.value.map((action) {
+            final hotkey = _hotkeys[action];
+            final buttonHeight = isMobile ? 120.0 : 80.0;
+            return SizedBox(
+              width: crossAxisCount == 1
+                  ? availableWidth
+                  : (availableWidth - 8 * (crossAxisCount - 1)) / crossAxisCount,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Stack(
+                    children: [
+                      SizedBox(
+                        height: buttonHeight,
+                        width: double.infinity,
+                        child: _buildButton(action, group, connection, isMobile),
+                      ),
+                      if (hotkey != null)
+                        Positioned(
+                          top: -4,
+                          right: -4,
+                          child: KeyWidget(label: hotkey.toUpperCase()),
+                        ),
+                    ],
+                  ),
+                  if (action.possibleValues != null) _buildQuickAccessButtons(action, connection),
+                ],
+              ),
+            );
+          }).toList(),
+        );
+      },
+    );
+  }
+
+  Widget _buildQuickAccessButtons(InGameAction action, TrainerConnection connection) {
+    final recent = _recentValues[action] ?? action.possibleValues!.take(2).toList();
+    return Padding(
+      padding: const EdgeInsets.only(top: 4),
+      child: Row(
+        spacing: 4,
+        children: [
+          for (int i = 0; i < 2; i++)
+            Expanded(
+              child: SizedBox(
+                height: 42,
+                child: i < recent.length
+                    ? OutlineButton(
+                        size: ButtonSize.small,
+                        density: ButtonDensity.compact,
+                        onPressed: () => _sendQuickValue(action, recent[i], connection),
+                        child: Center(child: Text(recent[i].toString())),
+                      )
+                    : SizedBox.shrink(),
+              ),
+            ),
+        ],
       ),
     );
   }
@@ -439,7 +571,7 @@ class _ButtonSimulatorState extends State<ButtonSimulator> {
   }) async {
     if (!connection.isConnected.value) {
       if (down) {
-        buildToast(context, title: 'No connected trainer.');
+        buildToast(title: 'No connected trainer.');
       }
 
       return;
@@ -462,9 +594,10 @@ class _ButtonSimulatorState extends State<ButtonSimulator> {
                         inGameAction: action,
                         inGameActionValue: e,
                       ),
-                      isKeyDown: false,
+                      isKeyDown: true,
                       isKeyUp: true,
                     );
+                    _updateRecentValue(action, e);
                   },
                 ),
               )
@@ -473,7 +606,7 @@ class _ButtonSimulatorState extends State<ButtonSimulator> {
       );
       return;
     } else {
-      if (!down && _lastDown != null) {
+      if (!down && _lastDown != null && action.isLongPress) {
         final timeSinceLastDown = DateTime.now().difference(_lastDown!);
         if (timeSinceLastDown < Duration(milliseconds: 400)) {
           // wait a bit so actions actually get applied correctly for some trainer apps
@@ -494,8 +627,8 @@ class _ButtonSimulatorState extends State<ButtonSimulator> {
         isKeyUp: !down,
       );
       await IAPManager.instance.incrementCommandCount();
-      if (result is! Success) {
-        buildToast(context, title: result.message);
+      if (result is! Success && result is! Ignored) {
+        buildToast(title: result.message);
       }
     }
   }

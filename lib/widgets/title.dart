@@ -1,11 +1,13 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:bike_control/bluetooth/messages/notification.dart';
 import 'package:bike_control/gen/l10n.dart';
 import 'package:bike_control/main.dart';
 import 'package:bike_control/utils/core.dart';
 import 'package:bike_control/utils/iap/iap_manager.dart';
 import 'package:bike_control/widgets/ui/gradient_text.dart';
+import 'package:bike_control/widgets/ui/loading_widget.dart';
 import 'package:bike_control/widgets/ui/small_progress_indicator.dart';
 import 'package:bike_control/widgets/ui/toast.dart';
 import 'package:flutter/foundation.dart';
@@ -29,19 +31,37 @@ class AppTitle extends StatefulWidget {
   State<AppTitle> createState() => _AppTitleState();
 }
 
-class _AppTitleState extends State<AppTitle> {
+enum UpdateType {
+  playStore,
+  shorebird,
+  appStore,
+  windowsStore,
+}
+
+class _AppTitleState extends State<AppTitle> with WidgetsBindingObserver {
   final updater = ShorebirdUpdater();
+
+  Version? _newVersion;
+  UpdateType? _updateType;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    IAPManager.instance.entitlements.addListener(_onEntitlementsUpdate);
 
     if (updater.isAvailable) {
-      updater.readCurrentPatch().then((patch) {
-        setState(() {
-          shorebirdPatch = patch;
-        });
-      });
+      updater
+          .readCurrentPatch()
+          .then((patch) {
+            core.connection.signalNotification(LogNotification('Current Shorebird patch: $patch'));
+            setState(() {
+              shorebirdPatch = patch;
+            });
+          })
+          .catchError((e, s) {
+            recordError(e, s, context: 'Shorebird');
+          });
     }
 
     if (packageInfoValue == null) {
@@ -54,6 +74,20 @@ class _AppTitleState extends State<AppTitle> {
     }
   }
 
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      _checkForUpdate();
+    }
+  }
+
+  @override
+  dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    IAPManager.instance.entitlements.removeListener(_onEntitlementsUpdate);
+    super.dispose();
+  }
+
   void _checkForUpdate() async {
     if (screenshotMode) {
       return;
@@ -62,14 +96,38 @@ class _AppTitleState extends State<AppTitle> {
       if (updateStatus == UpdateStatus.outdated) {
         updater
             .update()
-            .then((value) {
-              _showShorebirdRestartSnackbar();
+            .then((value) async {
+              setState(() {
+                _updateType = UpdateType.shorebird;
+              });
+              final nextPatch = await updater.readNextPatch();
+              final currentVersion = Version.parse(packageInfoValue!.version);
+              setState(() {
+                _newVersion = Version(
+                  currentVersion.major,
+                  currentVersion.minor,
+                  currentVersion.patch,
+                  build: nextPatch?.number.toString() ?? '',
+                );
+              });
             })
             .catchError((e) {
-              buildToast(context, title: AppLocalizations.current.failedToUpdate(e.toString()));
+              buildToast(title: AppLocalizations.current.failedToUpdate(e.toString()));
             });
       } else if (updateStatus == UpdateStatus.restartRequired) {
-        _showShorebirdRestartSnackbar();
+        _updateType = UpdateType.shorebird;
+      }
+      if (_updateType == UpdateType.shorebird) {
+        final nextPatch = await updater.readNextPatch();
+        final currentVersion = Version.parse(packageInfoValue!.version);
+        setState(() {
+          _newVersion = Version(
+            currentVersion.major,
+            currentVersion.minor,
+            currentVersion.patch,
+            build: nextPatch?.number.toString() ?? '',
+          );
+        });
       }
     }
 
@@ -79,14 +137,9 @@ class _AppTitleState extends State<AppTitle> {
       try {
         final appUpdateInfo = await InAppUpdate.checkForUpdate();
         if (context.mounted && appUpdateInfo.updateAvailability == UpdateAvailability.updateAvailable) {
-          buildToast(
-            context,
-            title: AppLocalizations.current.newVersionAvailable,
-            closeTitle: AppLocalizations.current.update,
-            onClose: () {
-              InAppUpdate.performImmediateUpdate();
-            },
-          );
+          setState(() {
+            _updateType = UpdateType.playStore;
+          });
         }
         isFromPlayStore = true;
         return null;
@@ -113,7 +166,7 @@ class _AppTitleState extends State<AppTitle> {
 
       final body = res.body;
       final regex = RegExp(
-        r'whats-new__latest__version">Version ([0-9]{1,2}\.[0-9]{1,2}.[0-9]{1,2})</p>',
+        r'>Version ([0-9]{1,2}\.[0-9]{1,2}.[0-9]{1,2})</h4>',
         dotAll: true,
       );
       final match = regex.firstMatch(body);
@@ -125,7 +178,7 @@ class _AppTitleState extends State<AppTitle> {
       }
     } else if (Platform.isWindows) {
       final url = Uri.parse(
-        'https://raw.githubusercontent.com/jonasbark/swiftcontrol/refs/heads/main/WINDOWS_STORE_VERSION.txt',
+        'https://raw.githubusercontent.com/OpenBikeControl/bikecontrol/refs/heads/main/WINDOWS_STORE_VERSION.txt',
       );
       final res = await http.get(url, headers: {'User-Agent': 'Mozilla/5.0'});
       if (res.statusCode != 200) return null;
@@ -140,33 +193,69 @@ class _AppTitleState extends State<AppTitle> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        GradientText('BikeControl', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 22)),
+        GradientText(
+          'BikeControl',
+          style: TextStyle(fontWeight: FontWeight.bold, fontSize: 22),
+        ),
         if (packageInfoValue != null)
           Text(
-            'v${packageInfoValue!.version}${shorebirdPatch != null ? '+${shorebirdPatch!.number}' : ''} - ${IAPManager.instance.getStatusMessage()}',
+            'v${packageInfoValue!.version}${shorebirdPatch != null ? '+${shorebirdPatch!.number}' : ''} - ${core.settings.getShowOnboarding() ? 'Onboarding' : IAPManager.instance.getStatusMessage()}',
             style: TextStyle(fontSize: 12),
           ).mono.muted
         else
           SmallProgressIndicator(),
+
+        if (_newVersion != null && _updateType != null)
+          Container(
+            margin: EdgeInsets.only(top: 8),
+            decoration: BoxDecoration(
+              border: Border.all(
+                color: Theme.of(context).colorScheme.destructive,
+              ),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: LoadingWidget(
+              futureCallback: () async {
+                if (_updateType == UpdateType.shorebird) {
+                  await _shorebirdRestart();
+                } else if (_updateType == UpdateType.playStore) {
+                  await launchUrlString(
+                    'https://play.google.com/store/apps/details?id=de.jonasbark.swiftcontrol',
+                    mode: LaunchMode.externalApplication,
+                  );
+                } else if (_updateType == UpdateType.appStore) {
+                  await launchUrlString(
+                    'https://apps.apple.com/app/id6753721284',
+                    mode: LaunchMode.externalApplication,
+                  );
+                } else if (_updateType == UpdateType.windowsStore) {
+                  await launchUrlString(
+                    'ms-windows-store://pdp/?productid=9NP42GS03Z26',
+                    mode: LaunchMode.externalApplication,
+                  );
+                }
+              },
+              renderChild: (isLoading, tap) => GhostButton(
+                onPressed: tap,
+                trailing: isLoading ? SmallProgressIndicator() : Icon(Icons.update),
+                child: Text(AppLocalizations.current.newVersionAvailableWithVersion(_newVersion.toString())),
+              ),
+            ),
+          ),
       ],
     );
   }
 
-  void _showShorebirdRestartSnackbar() {
-    buildToast(
-      context,
-      title: AppLocalizations.current.forceCloseToUpdate,
-      closeTitle: AppLocalizations.current.restart,
-      onClose: () {
-        core.connection.disconnectAll();
-        core.connection.stop();
-        if (Platform.isIOS) {
-          Restart.restartApp(delayBeforeRestart: 1000);
-        } else {
-          exit(0);
-        }
-      },
-    );
+  Future<void> _shorebirdRestart() async {
+    setState(() {
+      core.connection.disconnectAll();
+      core.connection.stop();
+      if (Platform.isIOS) {
+        Restart.restartApp(delayBeforeRestart: 1000);
+      } else {
+        exit(0);
+      }
+    });
   }
 
   void _compareVersion(String versionString) {
@@ -174,23 +263,25 @@ class _AppTitleState extends State<AppTitle> {
     final current = Version.parse(packageInfoValue!.version);
     if (parsed > current && mounted && !kDebugMode) {
       if (Platform.isAndroid) {
-        _showUpdateSnackbar(parsed, 'https://play.google.com/store/apps/details?id=org.jonasbark.swiftcontrol');
+        setState(() {
+          _updateType = UpdateType.playStore;
+          _newVersion = parsed;
+        });
       } else if (Platform.isIOS || Platform.isMacOS) {
-        _showUpdateSnackbar(parsed, 'https://apps.apple.com/app/id6753721284');
+        setState(() {
+          _updateType = UpdateType.appStore;
+          _newVersion = parsed;
+        });
       } else if (Platform.isWindows) {
-        _showUpdateSnackbar(parsed, 'ms-windows-store://pdp/?productid=9NP42GS03Z26');
+        setState(() {
+          _updateType = UpdateType.windowsStore;
+          _newVersion = parsed;
+        });
       }
     }
   }
 
-  void _showUpdateSnackbar(Version newVersion, String url) {
-    buildToast(
-      context,
-      title: AppLocalizations.current.newVersionAvailableWithVersion(newVersion.toString()),
-      closeTitle: AppLocalizations.current.download,
-      onClose: () {
-        launchUrlString(url);
-      },
-    );
+  void _onEntitlementsUpdate() {
+    setState(() {});
   }
 }

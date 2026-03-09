@@ -37,11 +37,16 @@ abstract class KeyPressSimulatorPlatform extends PlatformInterface {
     KeyboardKey? key,
     List<ModifierKey> modifiers = const [],
     bool keyDown = true,
+    String? targetApp,
   }) {
     throw UnimplementedError('simulateKeyPress() has not been implemented.');
   }
 
   Future<void> simulateMouseClick(Offset position, {required bool keyDown}) {
-    throw UnimplementedError('simulateKeyPress() has not been implemented.');
+    throw UnimplementedError('simulateMouseClick() has not been implemented.');
+  }
+
+  Future<void> simulateMediaKey(PhysicalKeyboardKey mediaKey) {
+    throw UnimplementedError('simulateMediaKey() has not been implemented.');
   }
 }

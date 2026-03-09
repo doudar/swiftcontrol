@@ -1,18 +1,11 @@
-import 'dart:io';
-
-import 'package:bike_control/gen/l10n.dart';
-import 'package:bike_control/main.dart';
-import 'package:bike_control/pages/button_simulator.dart';
-import 'package:bike_control/pages/markdown.dart';
 import 'package:bike_control/utils/core.dart';
 import 'package:bike_control/utils/i18n_extension.dart';
-import 'package:bike_control/utils/requirements/platform.dart';
-import 'package:bike_control/widgets/ignored_devices_dialog.dart';
 import 'package:bike_control/widgets/ui/connection_method.dart';
 import 'package:bike_control/widgets/ui/wifi_animation.dart';
 import 'package:flutter/foundation.dart';
 import 'package:shadcn_flutter/shadcn_flutter.dart';
-import 'package:url_launcher/url_launcher_string.dart';
+
+import '../utils/requirements/platform.dart';
 
 class ScanWidget extends StatefulWidget {
   const ScanWidget({super.key});
@@ -36,6 +29,7 @@ class _ScanWidgetState extends State<ScanWidget> {
     return Column(
       mainAxisAlignment: MainAxisAlignment.start,
       crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
       children: [
         if (_needsPermissions != null && _needsPermissions!.isNotEmpty)
           Card(
@@ -70,101 +64,19 @@ class _ScanWidgetState extends State<ScanWidget> {
                   mainAxisAlignment: MainAxisAlignment.start,
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    SizedBox(),
-                    Row(
-                      spacing: 14,
-                      children: [
-                        SizedBox(),
-                        SmoothWifiAnimation(),
-                        Expanded(
-                          child: Text(context.i18n.scanningForDevices).small.muted,
-                        ),
-                      ],
-                    ),
-                    SizedBox(),
-                    if (!kIsWeb && (Platform.isMacOS || Platform.isWindows))
-                      ValueListenableBuilder(
-                        valueListenable: core.mediaKeyHandler.isMediaKeyDetectionEnabled,
-                        builder: (context, value, child) {
-                          return Tooltip(
-                            tooltip: (c) => TooltipContainer(
-                              child: Text(context.i18n.mediaKeyDetectionTooltip),
-                            ),
-                            child: Checkbox(
-                              state: value ? CheckboxState.checked : CheckboxState.unchecked,
-                              trailing: Expanded(child: Text(context.i18n.enableMediaKeyDetection)),
-                              onChanged: (change) {
-                                core.mediaKeyHandler.isMediaKeyDetectionEnabled.value = change == CheckboxState.checked;
-                              },
-                            ),
-                          );
-                        },
-                      ),
-                    if (!kIsWeb && (Platform.isAndroid || Platform.isIOS))
-                      Checkbox(
-                        state: core.settings.getPhoneSteeringEnabled()
-                            ? CheckboxState.checked
-                            : CheckboxState.unchecked,
-                        trailing: Expanded(child: Text(AppLocalizations.of(context).enableSteeringWithPhone)),
-                        onChanged: (change) {
-                          core.settings.setPhoneSteeringEnabled(change == CheckboxState.checked);
-                          core.connection.toggleGyroscopeSteering(change == CheckboxState.checked);
-                          setState(() {});
-                        },
-                      ),
-                    SizedBox(),
-                    if (!screenshotMode)
+                    if (core.connection.controllerDevices.isEmpty)
                       Column(
-                        spacing: 8,
-                        crossAxisAlignment: CrossAxisAlignment.start,
+                        spacing: 14,
                         children: [
-                          OutlineButton(
-                            onPressed: () {
-                              Navigator.push(
-                                context,
-                                MaterialPageRoute(builder: (c) => MarkdownPage(assetPath: 'TROUBLESHOOTING.md')),
-                              );
-                            },
-                            leading: Icon(Icons.help_outline),
-                            child: Text(context.i18n.showTroubleshootingGuide),
-                          ),
-                          OutlineButton(
-                            onPressed: () {
-                              launchUrlString(
-                                'https://github.com/jonasbark/swiftcontrol/?tab=readme-ov-file#supported-devices',
-                              );
-                            },
-                            leading: Icon(Icons.gamepad_outlined),
-                            child: Text(context.i18n.showSupportedControllers),
-                          ),
-                          if (core.settings.getIgnoredDevices().isNotEmpty)
-                            OutlineButton(
-                              leading: Icon(Icons.block_outlined),
-                              onPressed: () async {
-                                await showDialog(
-                                  context: context,
-                                  builder: (context) => IgnoredDevicesDialog(),
-                                );
-                                setState(() {});
-                              },
-                              child: Text(context.i18n.manageIgnoredDevices),
-                            ),
-
-                          if (core.connection.controllerDevices.isEmpty)
-                            PrimaryButton(
-                              leading: Icon(Icons.computer_outlined),
-                              onPressed: () {
-                                Navigator.push(
-                                  context,
-                                  MaterialPageRoute(
-                                    builder: (c) => ButtonSimulator(),
-                                  ),
-                                );
-                              },
-                              child: Text(AppLocalizations.of(context).noControllerUseCompanionMode),
-                            ),
+                          SizedBox(),
+                          SmoothWifiAnimation(),
+                          Text(
+                            context.i18n.scanningForDevices,
+                            textAlign: TextAlign.center,
+                          ).small.muted,
                         ],
                       ),
+                    SizedBox(),
                   ],
                 );
               } else {

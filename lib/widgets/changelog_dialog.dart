@@ -1,8 +1,8 @@
+import 'package:bike_control/main.dart';
+import 'package:bike_control/utils/i18n_extension.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_md/flutter_md.dart';
 import 'package:shadcn_flutter/shadcn_flutter.dart';
-import 'package:bike_control/main.dart';
-import 'package:bike_control/utils/i18n_extension.dart';
 
 class ChangelogDialog extends StatelessWidget {
   final Markdown entry;
@@ -22,12 +22,21 @@ class ChangelogDialog extends StatelessWidget {
         children: [
           Text(context.i18n.whatsNew),
           SizedBox(height: 4),
-          Text(context.i18n.version(entry.blocks.first.text)),
+          Text(context.i18n.version(entry.blocks.first.text)).small,
         ],
       ),
       content: Container(
-        constraints: BoxConstraints(minWidth: 460),
-        child: MarkdownWidget(markdown: latestVersion),
+        constraints: BoxConstraints(minWidth: 460, maxHeight: 500),
+        child: Scrollbar(
+          child: SingleChildScrollView(
+            child: MarkdownWidget(
+              markdown: latestVersion,
+              theme: MarkdownThemeData(
+                textStyle: TextStyle(fontSize: 13, color: Theme.of(context).colorScheme.primary),
+              ),
+            ),
+          ),
+        ),
       ),
       actions: [
         TextButton(
@@ -40,7 +49,7 @@ class ChangelogDialog extends StatelessWidget {
 
   static Future<void> showIfNeeded(BuildContext context, String currentVersion, String? lastSeenVersion) async {
     // Show dialog if this is a new version
-    if (lastSeenVersion != currentVersion && !screenshotMode) {
+    if (lastSeenVersion != currentVersion && lastSeenVersion != null && !screenshotMode) {
       try {
         final entry = await rootBundle.loadString('CHANGELOG.md');
         if (context.mounted) {

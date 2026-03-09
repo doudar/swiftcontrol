@@ -138,7 +138,7 @@ class _TouchAreaSetupPageState extends State<TouchAreaSetupPage> {
     final flutterView = WidgetsBinding.instance.platformDispatcher.views.first;
 
     // figure out notch height for e.g. macOS. On Windows the display size is not available (0,0).
-    final differenceInHeight = (flutterView.display.size.height > 0 && !Platform.isIOS)
+    final differenceInHeight = (!Platform.isWindows && flutterView.display.size.height > 0 && !Platform.isIOS)
         ? (flutterView.display.size.height - flutterView.physicalSize.height) / flutterView.devicePixelRatio
         : 0.0;
 
@@ -296,6 +296,8 @@ class _TouchAreaSetupPageState extends State<TouchAreaSetupPage> {
                       final relativeX = ((newPos.dx - _imageRect.left) / _imageRect.width).clamp(0.0, 1.0);
                       final relativeY = ((newPos.dy - _imageRect.top) / _imageRect.height).clamp(0.0, 1.0);
                       keyPair.touchPosition = Offset(relativeX * 100.0, relativeY * 100.0);
+                      keyPair.inGameAction = null;
+                      keyPair.inGameActionValue = null;
                       setState(() {});
                     },
                     color: Colors.red,
@@ -398,7 +400,7 @@ class KeypairExplanation extends StatelessWidget {
           : Icon(keyPair.icon),
       leadingAlignment: Alignment.centerLeft,
       contentSpacing: 10,
-      subtitle: keyPair.isLongPress ? Text(context.i18n.longPress.replaceAll('\n', ' ')).muted.xSmall : null,
+      subtitle: Text(keyPair.trigger.title).muted.xSmall,
       title: Text(keyPair.toString()),
     );
   }

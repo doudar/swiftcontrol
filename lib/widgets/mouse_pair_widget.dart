@@ -1,22 +1,22 @@
 import 'dart:io';
 
-import 'package:shadcn_flutter/shadcn_flutter.dart';
-import 'package:bike_control/bluetooth/devices/zwift/protocol/zp.pbenum.dart' show LogLevel;
 import 'package:bike_control/bluetooth/messages/notification.dart';
 import 'package:bike_control/utils/core.dart';
 import 'package:bike_control/utils/i18n_extension.dart';
 import 'package:bike_control/widgets/ui/connection_method.dart';
+import 'package:prop/prop.dart' show LogLevel;
+import 'package:shadcn_flutter/shadcn_flutter.dart';
 
 import '../utils/requirements/multi.dart';
 
-class RemotePairingWidget extends StatefulWidget {
-  const RemotePairingWidget({super.key});
+class RemoteMousePairingWidget extends StatefulWidget {
+  const RemoteMousePairingWidget({super.key});
 
   @override
-  State<RemotePairingWidget> createState() => _PairWidgetState();
+  State<RemoteMousePairingWidget> createState() => _PairWidgetState();
 }
 
-class _PairWidgetState extends State<RemotePairingWidget> {
+class _PairWidgetState extends State<RemoteMousePairingWidget> {
   @override
   Widget build(BuildContext context) {
     return ValueListenableBuilder(
@@ -26,10 +26,12 @@ class _PairWidgetState extends State<RemotePairingWidget> {
           valueListenable: core.remotePairing.isConnected,
           builder: (context, isConnected, child) {
             return ConnectionMethod(
+              supportedActions: null,
               isEnabled: core.logic.isRemoteControlEnabled,
               isStarted: isStarted,
               showTroubleshooting: true,
               type: ConnectionMethodType.bluetooth,
+              isRecommended: false,
               instructionLink: 'INSTRUCTIONS_REMOTE_CONTROL.md',
               title: context.i18n.enablePairingProcess,
               description: context.i18n.pairingDescription,
